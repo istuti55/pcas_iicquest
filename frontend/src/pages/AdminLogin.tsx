@@ -1,7 +1,6 @@
-import { useState } from 'react';
-import { ShieldAlert, ArrowLeft, ShieldCheck, Lock } from 'lucide-react';
-
-const ADMIN_PIN = '1234';
+import { useState, useEffect } from 'react';
+import { adminAPI } from '../services/api';
+import { ShieldAlert, ArrowLeft, Lock, Loader } from 'lucide-react';
 
 interface AdminLoginProps {
   onSuccess: () => void;
@@ -10,17 +9,26 @@ interface AdminLoginProps {
 
 export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
   const [pin, setPin] = useState('');
+  const [adminPin, setAdminPin] = useState<string | null>(null);
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
+  const [loadingPin, setLoadingPin] = useState(true);
+
+  useEffect(() => {
+    adminAPI.getCredentials()
+      .then(res => setAdminPin(res.data.pin))
+      .catch(() => setAdminPin('1234'))
+      .finally(() => setLoadingPin(false));
+  }, []);
 
   const handleDigit = (d: string) => {
-    if (pin.length >= 4) return;
+    if (pin.length >= 4 || !adminPin) return;
     const next = pin + d;
     setPin(next);
     setError(false);
     if (next.length === 4) {
       setTimeout(() => {
-        if (next === ADMIN_PIN) {
+        if (next === adminPin) {
           onSuccess();
         } else {
           setError(true);
@@ -53,10 +61,12 @@ export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
           <div className="w-24 h-24 glass rounded-[2rem] flex items-center justify-center mx-auto mb-10 relative group">
             <div className={`absolute inset-0 rounded-[2rem] transition-opacity duration-700 blur-2xl ${error ? 'bg-red-500/20' : 'bg-blue-500/20'}`} />
             <div className="relative z-10 glass w-full h-full rounded-[2rem] flex items-center justify-center border-white/10">
-                {error 
-                ? <ShieldAlert size={36} className="text-red-500" /> 
-                : <Lock size={36} className={`${pin.length > 0 ? 'text-blue-400' : 'text-slate-600'} transition-colors duration-500`} />
-                }
+              {loadingPin
+                ? <Loader size={36} className="text-slate-600 animate-spin" />
+                : error
+                  ? <ShieldAlert size={36} className="text-red-500" />
+                  : <Lock size={36} className={`${pin.length > 0 ? 'text-blue-400' : 'text-slate-600'} transition-colors duration-500`} />
+              }
             </div>
           </div>
           <h1 className="text-4xl font-black text-white mb-3 tracking-tighter">Staff Access</h1>
@@ -70,7 +80,7 @@ export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
               key={i}
               className={`w-3.5 h-3.5 rounded-full transition-all duration-500 border-2 ${
                 pin.length > i
-                  ? (error ? 'bg-red-500 border-red-400 scale-125 glow-blue !shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-blue-500 border-blue-400 scale-125 glow-blue')
+                  ? (error ? 'bg-red-500 border-red-400 scale-125 !shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-blue-500 border-blue-400 scale-125 glow-blue')
                   : 'bg-transparent border-slate-800'
               }`}
             />
@@ -86,14 +96,14 @@ export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
                 if (key === '⌫') handleDelete();
                 else if (key !== '') handleDigit(key);
               }}
-              disabled={key === ''}
+              disabled={key === '' || loadingPin}
               className={`h-20 rounded-[2rem] text-2xl font-black transition-all duration-300 active:scale-95 flex items-center justify-center ${
                 key === ''
                   ? 'bg-transparent cursor-default'
                   : key === '⌫'
                     ? 'glass hover:bg-white/5 text-slate-500'
                     : 'glass text-white hover:bg-white/10 hover:border-blue-500/30'
-              }`}
+              } disabled:opacity-40`}
             >
               {key}
             </button>
@@ -101,10 +111,10 @@ export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
         </div>
 
         {error && (
-            <div className="mt-12 flex items-center justify-center gap-3">
-                <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-                <p className="text-red-400 text-[10px] font-black uppercase tracking-[0.3em]">Access Denied</p>
-            </div>
+          <div className="mt-12 flex items-center justify-center gap-3">
+            <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
+            <p className="text-red-400 text-[10px] font-black uppercase tracking-[0.3em]">Access Denied</p>
+          </div>
         )}
       </div>
 

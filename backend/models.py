@@ -16,6 +16,7 @@ class TokenState(str, enum.Enum):
     COMPLETED = "completed"
     SKIPPED = "skipped"
     NO_SHOW = "no_show"
+    CANCELLED = "cancelled"
 
 
 class Organization(Base):

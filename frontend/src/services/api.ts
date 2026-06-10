@@ -13,6 +13,7 @@ const api: AxiosInstance = axios.create({
 export const organizationAPI = {
   create: (name: string) => api.post('/organizations', { name }),
   get: (id: string) => api.get(`/organizations/${id}`),
+  listAll: () => api.get('/organizations'),
 };
 
 // Queue APIs
@@ -22,15 +23,16 @@ export const queueAPI = {
   list: (orgId: string) => api.get(`/organizations/${orgId}/queues`),
   get: (id: string) => api.get(`/queues/${id}`),
   update: (id: string, data: any) => api.patch(`/queues/${id}`, data),
-  getStats: (id: string) => api.get(`/queues/${id}/stats`),
-  getOperatorView: (id: string) => api.get(`/queues/${id}/operator-view`),
+  getStats: (id: string, service_day?: string) => api.get(`/queues/${id}/stats${service_day ? `?service_day=${service_day}` : ''}`),
+  getOperatorView: (id: string, service_day?: string) => api.get(`/queues/${id}/operator-view${service_day ? `?service_day=${service_day}` : ''}`),
+  predict: (id: string) => api.get(`/queues/${id}/predict`),
 };
 
 // Token APIs
 export const tokenAPI = {
   create: (queueId: string, data: { phone?: string; email?: string; service_day?: 'today' | 'tomorrow' }) =>
     api.post(`/queues/${queueId}/tokens`, data),
-  list: (queueId: string) => api.get(`/queues/${queueId}/tokens`),
+  list: (queueId: string, service_day?: string) => api.get(`/queues/${queueId}/tokens${service_day ? `?service_day=${service_day}` : ''}`),
   get: (id: string) => {
     const secret = localStorage.getItem(`token_secret_${id}`);
     return api.get(`/tokens/${id}`, {
@@ -49,10 +51,18 @@ export const counterAPI = {
   update: (id: string, data: any) => api.patch(`/counters/${id}`, data),
 };
 
+// Admin APIs
+export const adminAPI = {
+  getCredentials: () => api.get('/admin/credentials'),
+  changePassword: (current_pin: string, new_pin: string) =>
+    api.post('/admin/change-password', { current_pin, new_pin }),
+};
+
 // ML APIs
 export const mlAPI = {
   train: () => api.post('/ml/train'),
   getModelInfo: () => api.get('/ml/model-info'),
+  seedData: () => api.post('/ml/seed-data'),
 };
 
 // Health check

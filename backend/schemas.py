@@ -11,6 +11,7 @@ class TokenStateEnum(str, Enum):
     COMPLETED = "completed"
     SKIPPED = "skipped"
     NO_SHOW = "no_show"
+    CANCELLED = "cancelled"
 
 
 # Organization Schemas
@@ -138,6 +139,7 @@ class QueueStatsResponse(BaseModel):
     total_waiting: int
     total_serving: int
     total_completed_today: int
+    total_issued: int
     avg_wait_time: Optional[float]
     counters_active: int
     counters_total: int

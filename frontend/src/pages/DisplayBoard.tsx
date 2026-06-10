@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { queueAPI } from '../services/api';
 import TokenBadge from '../components/TokenBadge';
-import { ArrowLeft, Clock, Users, Activity, Monitor } from 'lucide-react';
+import { ArrowLeft, Clock, Users, Activity, Monitor, Brain } from 'lucide-react';
 
 interface DisplayBoardProps {
   queueId: string;
@@ -11,18 +11,21 @@ interface DisplayBoardProps {
 export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
   const [opData, setOpData] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [mlPrediction, setMlPrediction] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [now, setNow] = useState(new Date());
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [opRes, sRes] = await Promise.all([
+        const [opRes, sRes, mlRes] = await Promise.all([
           queueAPI.getOperatorView(queueId),
           queueAPI.getStats(queueId),
+          queueAPI.predict(queueId).catch(() => ({ data: null })),
         ]);
         setOpData(opRes.data);
         setStats(sRes.data);
+        if (mlRes.data) setMlPrediction(mlRes.data);
       } catch {}
       setLoading(false);
     };
@@ -45,24 +48,26 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
       {/* Background Decor */}
       <div className="absolute top-0 left-0 w-full h-[50%] bg-gradient-to-b from-blue-600/5 to-transparent pointer-events-none" />
       
-      {/* Back button */}
-      <button
-        onClick={onBack}
-        className="absolute top-8 left-8 z-50 flex items-center gap-2 text-slate-500 hover:text-white transition-all bg-white/5 hover:bg-white/10 px-4 py-2 rounded-2xl border border-white/5"
-      >
-        <ArrowLeft size={20} /> Back
-      </button>
+
 
       {/* Header */}
       <header className="relative z-10 px-12 py-10 flex items-center justify-between border-b border-white/5 bg-black/40 backdrop-blur-xl">
-        <div className="animate-in">
-          <div className="flex items-center gap-3 mb-1">
-             <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-2xl shadow-blue-500/40">
-                <Activity size={24} className="text-white" />
-             </div>
-             <h1 className="text-4xl font-black tracking-tighter text-white">Lobby Display</h1>
+        <div className="flex items-center gap-8 animate-in">
+          <button
+            onClick={onBack}
+            className="flex items-center justify-center w-12 h-12 text-slate-500 hover:text-white transition-all bg-white/5 hover:bg-white/10 rounded-2xl border border-white/5"
+          >
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <div className="flex items-center gap-3 mb-1">
+               <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center shadow-2xl shadow-blue-500/40">
+                  <Activity size={24} className="text-white" />
+               </div>
+               <h1 className="text-4xl font-black tracking-tighter text-white">Lobby Display</h1>
+            </div>
+            <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-xs pl-1">Department: {opData?.queue_name || 'Main Reception'}</p>
           </div>
-          <p className="text-slate-500 font-bold uppercase tracking-[0.2em] text-xs pl-1">Department: {opData?.queue_name || 'Main Reception'}</p>
         </div>
 
         <div className="text-right animate-in" style={{ animationDelay: '0.1s' }}>
@@ -109,9 +114,14 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
                     <p className="text-4xl font-black text-blue-400 mb-1">{stats?.total_waiting ?? 0}</p>
                     <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest leading-none">In Line</p>
                  </div>
-                 <div className="bg-white/5 border border-white/5 rounded-3xl p-6 text-center">
-                    <p className="text-4xl font-black text-amber-400 mb-1">{stats?.avg_wait_time ? Math.round(stats.avg_wait_time) : '—'}</p>
-                    <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest leading-none">Min Wait</p>
+                 <div className="bg-white/5 border border-white/5 rounded-3xl p-6 text-center relative overflow-hidden">
+                    <div className="absolute top-0 right-0 p-2">
+                       {mlPrediction?.is_ml_trained && <Brain size={12} className="text-amber-500/30" />}
+                    </div>
+                    <p className="text-4xl font-black text-amber-400 mb-1">{mlPrediction ? Math.round(mlPrediction.estimated_wait_minutes) : '—'}</p>
+                    <p className="text-slate-500 text-[10px] font-black uppercase tracking-widest leading-none">
+                      {mlPrediction?.is_ml_trained ? 'AI Predict' : 'Live Predict'}
+                    </p>
                  </div>
               </div>
            </div>

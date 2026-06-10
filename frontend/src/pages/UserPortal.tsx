@@ -1,22 +1,81 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { tokenAPI, queueAPI } from '../services/api';
 import TokenBadge from '../components/TokenBadge';
-import { ArrowLeft, CheckCircle, Clock, Hash, Users, AlertCircle, Sparkles, ArrowRight } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Users, AlertCircle, Sparkles, ArrowRight, Brain, Zap } from 'lucide-react';
 
 interface UserPortalProps {
-  queueId: string;
+  orgId: string;
+  defaultQueueId: string;
   onBack: () => void;
 }
 
-export default function UserPortal({ queueId, onBack }: UserPortalProps) {
+export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortalProps) {
   const [phone, setPhone] = useState('');
   const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [token, setToken] = useState<any>(null);
+  const [showInsights, setShowInsights] = useState(false);
+  const [cancelLoading, setCancelLoading] = useState(false);
   const [serviceDate, setServiceDate] = useState<'today' | 'tomorrow'>('today');
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
   const [totalWaiting, setTotalWaiting] = useState<number>(0);
+  const [mlPrediction, setMlPrediction] = useState<{ estimated_wait_minutes: number; source: string; current_waiting: number; is_ml_trained: boolean } | null>(null);
+
+  const [queues, setQueues] = useState<any[]>([]);
+  const [selectedQueueId, setSelectedQueueId] = useState<string>(defaultQueueId);
+
+  const notified1MinRef = useRef(false);
+  const notifiedCalledRef = useRef(false);
+
+  useEffect(() => {
+    const fetchQueues = async () => {
+      try {
+        const idToUse = orgId || localStorage.getItem('palo_org_id');
+        if (!idToUse) return;
+        const res = await queueAPI.list(idToUse);
+        setQueues(res.data);
+        if (res.data.length > 0 && (!selectedQueueId || !res.data.find((q: any) => q.id === selectedQueueId))) {
+          setSelectedQueueId(res.data[0].id);
+        }
+      } catch {}
+    };
+    fetchQueues();
+  }, [orgId, selectedQueueId]);
+
+  useEffect(() => {
+    const activeTokenId = localStorage.getItem('palo_active_token_id');
+    if (activeTokenId) {
+      tokenAPI.get(activeTokenId).then(res => {
+        const t = res.data;
+        if (t.state === 'waiting' || t.state === 'called' || t.state === 'serving') {
+          setToken(t);
+        } else {
+          localStorage.removeItem('palo_active_token_id');
+        }
+      }).catch(() => localStorage.removeItem('palo_active_token_id'));
+    }
+  }, []);
+
+  useEffect(() => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  // Fetch ML prediction on join form (before getting a token)
+  useEffect(() => {
+    if (token || !selectedQueueId) return; // only on join form
+    const fetchPrediction = async () => {
+      try {
+        const res = await queueAPI.predict(selectedQueueId);
+        setMlPrediction(res.data);
+      } catch {}
+    };
+    fetchPrediction();
+    const interval = setInterval(fetchPrediction, 10000);
+    return () => clearInterval(interval);
+  }, [selectedQueueId, token]);
 
   useEffect(() => {
     if (!token) return;
@@ -24,26 +83,38 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
       try {
         const [tRes, qRes, listRes] = await Promise.all([
           tokenAPI.get(token.id),
-          queueAPI.getStats(queueId),
-          tokenAPI.list(queueId),
+          queueAPI.getStats(selectedQueueId, serviceDate),
+          tokenAPI.list(selectedQueueId, serviceDate),
         ]);
         setToken(tRes.data);
         setTotalWaiting(qRes.data.total_waiting);
         const waiting = listRes.data.tokens.filter((t: any) => t.state === 'waiting' || t.state === 'called' || t.state === 'serving');
         const pos = waiting.findIndex((t: any) => t.id === token.id);
         setQueuePosition(pos >= 0 ? pos + 1 : null);
+
+        // Offline / Background Notifications
+        if ('Notification' in window && Notification.permission === 'granted') {
+          if (tRes.data.state === 'called' && !notifiedCalledRef.current) {
+            new Notification('Your Turn!', { body: 'Please proceed to the counter immediately.', requireInteraction: true });
+            notifiedCalledRef.current = true;
+          } else if (tRes.data.state === 'waiting' && tRes.data.estimated_wait_minutes < 1.0 && !notified1MinRef.current) {
+            new Notification('Almost there!', { body: 'Less than a minute left! Get ready.' });
+            notified1MinRef.current = true;
+          }
+        }
       } catch {}
     };
     refresh();
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
-  }, [token?.id, queueId]);
+  }, [token?.id, selectedQueueId, serviceDate]);
 
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!selectedQueueId) return;
     setLoading(true); setError('');
     try {
-      const res = await tokenAPI.create(queueId, { 
+      const res = await tokenAPI.create(selectedQueueId, { 
         phone: phone || undefined, 
         email: email || undefined,
         service_day: serviceDate
@@ -52,6 +123,7 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
       if (newToken.secret_token) {
         localStorage.setItem(`token_secret_${newToken.id}`, newToken.secret_token);
       }
+      localStorage.setItem('palo_active_token_id', newToken.id);
       setToken(newToken);
     } catch (err: any) {
       if (err.response?.status === 403) {
@@ -62,25 +134,43 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
     } finally { setLoading(false); }
   };
 
-  const handleLeave = () => {
-    setToken(null);
-    setPhone('');
-    setEmail('');
-    setQueuePosition(null);
-  };
-
   const isServing = token?.state === 'serving' || token?.state === 'called';
   const isCompleted = token?.state === 'completed';
+  const isCancelled = token?.state === 'cancelled';
+
+  const handleExit = () => {
+    if (isCompleted || isCancelled) {
+      localStorage.removeItem('palo_active_token_id');
+      setToken(null);
+    }
+    onBack();
+  };
+
+  const handleCancel = async () => {
+    if (!token) return;
+    if (!confirm('Are you sure you want to cancel your queue ticket? This action cannot be undone.')) return;
+    
+    setCancelLoading(true);
+    try {
+      const res = await tokenAPI.updateState(token.id, 'cancelled');
+      setToken(res.data);
+      localStorage.removeItem('palo_active_token_id');
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to cancel ticket.');
+    } finally {
+      setCancelLoading(false);
+    }
+  };
 
   // ── Token tracking ─────────────────────────────────────────────────────────
   if (token) {
     return (
       <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 relative overflow-hidden">
         <button 
-          onClick={handleLeave} 
+          onClick={handleExit} 
           className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 hover:text-white transition-all bg-white/5 px-4 py-2 rounded-2xl border border-white/5"
         >
-          <ArrowLeft size={18} /> Exit
+          <ArrowLeft size={18} /> {isCompleted || isCancelled ? 'Home' : 'Exit'}
         </button>
 
         <div className="relative z-10 w-full max-w-lg animate-in">
@@ -144,12 +234,15 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
                 <p className="text-2xl font-black text-white">{queuePosition ?? '—'}</p>
                 <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">Position</p>
               </div>
-              <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors">
+              <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors relative">
+                <div className="absolute top-4 right-4">
+                  <Brain size={12} className="text-amber-500/30" />
+                </div>
                 <Clock size={14} className="text-amber-400 mx-auto mb-3" />
                 <p className="text-2xl font-black text-white">
                   {token.estimated_wait_minutes ? Math.round(token.estimated_wait_minutes) : '—'}m
                 </p>
-                <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">Wait</p>
+                <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">AI Predict</p>
               </div>
               <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors">
                 <Users size={14} className="text-purple-400 mx-auto mb-3" />
@@ -159,12 +252,69 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
             </div>
           )}
 
-          {isCompleted && (
-            <button
-              onClick={handleLeave}
-              className="w-full btn-premium"
+          {/* User Insights & Actions */}
+          <div className="mt-8 animate-in" style={{ animationDelay: '0.2s' }}>
+            <button 
+              onClick={() => setShowInsights(!showInsights)}
+              className="w-full flex items-center justify-between p-5 glass rounded-2xl text-slate-400 hover:text-white transition-all hover:bg-white/5 border border-white/5"
             >
-              Get New Token
+              <span className="text-[10px] font-black uppercase tracking-[0.3em]">View Ticket Insights</span>
+              <ArrowRight size={16} className={`transition-transform duration-300 ${showInsights ? 'rotate-90 text-blue-400' : ''}`} />
+            </button>
+            
+            {showInsights && (
+              <div className="mt-4 p-6 glass rounded-2xl animate-in space-y-6 text-left border border-white/5 shadow-2xl">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Queue ID</p>
+                    <p className="font-bold text-slate-300 truncate">{token.queue_id.split('-')[0]}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Joined At</p>
+                    <p className="font-bold text-slate-300">
+                      {new Date(token.joined_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  {token.phone && (
+                    <div>
+                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Contact</p>
+                      <p className="font-bold text-slate-300">{token.phone}</p>
+                    </div>
+                  )}
+                  <div>
+                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Status</p>
+                    <p className="font-bold text-slate-300 capitalize">{token.state}</p>
+                  </div>
+                </div>
+
+                {(!isCompleted && !isCancelled) && (
+                  <div className="pt-4 border-t border-white/5">
+                    <button 
+                      onClick={handleCancel}
+                      disabled={cancelLoading}
+                      className="w-full py-4 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white border border-red-500/20 transition-all flex justify-center items-center gap-2"
+                    >
+                      {cancelLoading ? (
+                        <span className="flex items-center gap-2">
+                           <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                           Canceling...
+                        </span>
+                      ) : (
+                        <>Cancel Queue Ticket</>
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {(isCompleted || isCancelled) && (
+            <button
+              onClick={handleExit}
+              className="w-full mt-6 py-4 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] bg-blue-600 text-white shadow-xl hover:bg-blue-500 transition-colors"
+            >
+              Return Home
             </button>
           )}
 
@@ -225,6 +375,22 @@ export default function UserPortal({ queueId, onBack }: UserPortalProps) {
         </div>
 
         <form onSubmit={handleJoin} className="space-y-8">
+          {queues.length > 0 && (
+            <div className="space-y-3">
+              <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 ml-4">Select Service Queue</label>
+              <select
+                value={selectedQueueId}
+                onChange={e => setSelectedQueueId(e.target.value)}
+                className="input-premium h-18 text-xl appearance-none cursor-pointer"
+                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1.5rem center' }}
+              >
+                {queues.map(q => (
+                  <option key={q.id} value={q.id} className="bg-slate-900">{q.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-3">
             <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 ml-4">Phone Number</label>
             <input

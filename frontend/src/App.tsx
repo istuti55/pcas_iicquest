@@ -1,20 +1,26 @@
 import { useState, useEffect } from 'react';
-import { healthAPI } from './services/api';
-import Setup from './pages/Setup';
+import { healthAPI, organizationAPI, queueAPI } from './services/api';
 import HomeView from './pages/HomeView';
 import UserPortal from './pages/UserPortal';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import DisplayBoard from './pages/DisplayBoard';
 
-export type AppView = 'setup' | 'home' | 'user' | 'admin-login' | 'admin' | 'display';
+export type AppView = 'home' | 'user' | 'admin-login' | 'admin' | 'display';
 
 export default function App() {
-  const [view, setView] = useState<AppView>('home');
+  const [view, setView] = useState<AppView>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get('view') as AppView;
+    return v || 'home';
+  });
   const [isHealthy, setIsHealthy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [queueId, setQueueId] = useState<string | null>(() =>
     localStorage.getItem('palo_queue_id')
+  );
+  const [orgId, setOrgId] = useState<string | null>(() =>
+    localStorage.getItem('palo_org_id')
   );
 
   useEffect(() => {
@@ -22,6 +28,36 @@ export default function App() {
       try {
         await healthAPI.check();
         setIsHealthy(true);
+
+        let savedOrgId = localStorage.getItem('palo_org_id');
+        let savedQueueId = localStorage.getItem('palo_queue_id');
+
+        if (!savedOrgId || !savedQueueId) {
+          try {
+            const orgsRes = await organizationAPI.listAll();
+            if (!orgsRes.data || orgsRes.data.length === 0) {
+              throw new Error("No organizations found");
+            }
+            savedOrgId = orgsRes.data[0].id;
+            localStorage.setItem('palo_org_id', savedOrgId!);
+
+            if (!savedQueueId) {
+              const qRes = await queueAPI.list(savedOrgId!);
+              const queues = qRes.data;
+              if (queues && queues.length > 0) {
+                savedQueueId = queues[0].id;
+                localStorage.setItem('palo_queue_id', savedQueueId!);
+              } else {
+                savedQueueId = null;
+              }
+            }
+          } catch {
+            savedQueueId = null;
+          }
+        }
+
+        if (savedOrgId) setOrgId(savedOrgId);
+        if (savedQueueId) setQueueId(savedQueueId);
       } catch {
         setIsHealthy(false);
       } finally {
@@ -30,20 +66,6 @@ export default function App() {
     };
     init();
   }, []);
-
-  useEffect(() => {
-    // First-time setup if no queue configured
-    if (!loading && isHealthy && !queueId) {
-      setView('setup');
-    }
-  }, [loading, isHealthy, queueId]);
-
-  const handleSetupComplete = (orgId: string, qId: string) => {
-    localStorage.setItem('palo_org_id', orgId);
-    localStorage.setItem('palo_queue_id', qId);
-    setQueueId(qId);
-    setView('home');
-  };
 
   const handleAdminLogout = () => {
     sessionStorage.removeItem('palo_admin');
@@ -55,11 +77,17 @@ export default function App() {
     setView('admin');
   };
 
+  const handleQueueChange = (newQueueId: string) => {
+    localStorage.setItem('palo_queue_id', newQueueId);
+    setQueueId(newQueueId);
+  };
+
   const handleReset = () => {
     localStorage.clear();
     sessionStorage.clear();
     setQueueId(null);
-    setView('setup');
+    setView('home');
+    window.location.reload();
   };
 
   if (loading) {
@@ -91,28 +119,39 @@ export default function App() {
     );
   }
 
+  // If no queue resolved at all, show a simple error state
+  if (!queueId) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+        <div className="bg-slate-900 border border-amber-800 rounded-2xl p-10 max-w-sm w-full text-center shadow-2xl">
+          <div className="text-5xl mb-4">🗂️</div>
+          <h2 className="text-2xl font-bold text-amber-400 mb-2">No Queue Found</h2>
+          <p className="text-slate-400 mb-6">The backend hasn't created any queues yet. Make sure the backend has fully started.</p>
+          <button
+            onClick={() => window.location.reload()}
+            className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-3 rounded-xl transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   const renderContent = () => {
-    if (view === 'setup') {
-      return <Setup onSetupComplete={handleSetupComplete} />;
-    }
-
-    if (!queueId) {
-      return <Setup onSetupComplete={handleSetupComplete} />;
-    }
-
     switch (view) {
       case 'home':
-        return <HomeView queueId={queueId} setView={setView} onReset={handleReset} />;
+        return <HomeView orgId={orgId!} setView={setView} onReset={handleReset} onSelectQueue={handleQueueChange} />;
       case 'user':
-        return <UserPortal queueId={queueId} onBack={() => setView('home')} />;
+        return <UserPortal orgId={orgId!} defaultQueueId={queueId!} onBack={() => setView('home')} />;
       case 'admin-login':
         return <AdminLogin onSuccess={handleAdminLoginSuccess} onBack={() => setView('home')} />;
       case 'admin':
-        return <AdminDashboard queueId={queueId} onLogout={handleAdminLogout} />;
+        return <AdminDashboard queueId={queueId!} orgId={orgId!} onLogout={handleAdminLogout} onQueueChange={handleQueueChange} />;
       case 'display':
-        return <DisplayBoard queueId={queueId} onBack={() => setView('home')} />;
+        return <DisplayBoard queueId={queueId!} onBack={() => setView('home')} />;
       default:
-        return <HomeView queueId={queueId} setView={setView} onReset={handleReset} />;
+        return <HomeView orgId={orgId!} setView={setView} onReset={handleReset} onSelectQueue={handleQueueChange} />;
     }
   };
 

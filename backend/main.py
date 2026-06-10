@@ -28,6 +28,25 @@ from ml_engine import ml_engine
 async def lifespan(app: FastAPI):
     """Initialize database on startup"""
     init_db()
+    
+    # Bootstrap default Organization and Queue if database is empty
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        if db.query(Organization).count() == 0:
+            default_org = Organization(id="default-org", name="Pālo Main Organization")
+            db.add(default_org)
+            default_queue = Queue(
+                id="default-queue", 
+                organization_id="default-org", 
+                name="Main Registration Queue", 
+                description="Default system queue"
+            )
+            db.add(default_queue)
+            db.commit()
+    finally:
+        db.close()
+        
     yield
 
 
@@ -83,6 +102,12 @@ async def get_organization(org_id: str, db: Session = fastapi.Depends(get_db)):
     if not org:
         raise fastapi.HTTPException(status_code=404, detail="Organization not found")
     return org
+
+
+@app.get("/organizations", response_model=list[OrganizationResponse])
+async def list_organizations(db: Session = fastapi.Depends(get_db)):
+    """List all organizations"""
+    return db.query(Organization).all()
 
 
 # ============================================================================
@@ -255,13 +280,21 @@ async def create_token(
 
 
 @app.get("/queues/{queue_id}/tokens", response_model=TokenListResponse)
-async def list_tokens(queue_id: str, db: Session = fastapi.Depends(get_db)):
+async def list_tokens(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
     """List all tokens in a queue"""
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
     
-    tokens = db.query(Token).filter(Token.queue_id == queue_id).all()
+    from datetime import timedelta
+    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if service_day == "tomorrow":
+        target_date += timedelta(days=1)
+    
+    tokens = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.service_date == target_date
+    ).all()
     
     waiting = sum(1 for t in tokens if t.state == TokenState.WAITING)
     serving = sum(1 for t in tokens if t.state == TokenState.SERVING)
@@ -296,6 +329,26 @@ async def get_token(
         if token.email:
             parts = token.email.split("@")
             token.email = parts[0][:2] + "..." + "@" + parts[1] if len(parts) > 1 else "***"
+            
+    # Dynamically update the AI predicted wait time based on current position
+    if token.state == TokenState.WAITING:
+        tokens_ahead = db.query(Token).filter(
+            Token.queue_id == token.queue_id,
+            Token.service_date == token.service_date,
+            Token.state == TokenState.WAITING,
+            Token.joined_at < token.joined_at
+        ).count()
+        
+        # If there are no users ahead, estimated wait is 0 (or almost your turn)
+        if tokens_ahead == 0:
+            token.estimated_wait_minutes = 0
+        else:
+            now = datetime.utcnow()
+            est = ml_engine.predict(now.hour, now.weekday(), tokens_ahead)
+            if est is None:
+                # Fallback heuristic if ML not trained
+                est = max(1, tokens_ahead * 8)
+            token.estimated_wait_minutes = est
             
     return token
 
@@ -415,30 +468,38 @@ async def update_counter(
 # ============================================================================
 
 @app.get("/queues/{queue_id}/stats", response_model=QueueStatsResponse)
-async def get_queue_stats(queue_id: str, db: Session = fastapi.Depends(get_db)):
+async def get_queue_stats(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
     """Get queue statistics"""
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
     
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    from datetime import timedelta
+    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if service_day == "tomorrow":
+        target_date += timedelta(days=1)
     
     waiting = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.WAITING,
-        Token.service_date == today
+        Token.service_date == target_date
     ).count()
     
     serving = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.SERVING,
-        Token.service_date == today
+        Token.service_date == target_date
     ).count()
     
     completed = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.COMPLETED,
-        Token.service_date == today
+        Token.service_date == target_date
+    ).count()
+    
+    total_issued = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.service_date == target_date
     ).count()
     
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
@@ -461,6 +522,7 @@ async def get_queue_stats(queue_id: str, db: Session = fastapi.Depends(get_db)):
         total_waiting=waiting,
         total_serving=serving,
         total_completed_today=completed,
+        total_issued=total_issued,
         avg_wait_time=avg_wait,
         counters_active=active_counters,
         counters_total=len(counters)
@@ -468,24 +530,27 @@ async def get_queue_stats(queue_id: str, db: Session = fastapi.Depends(get_db)):
 
 
 @app.get("/queues/{queue_id}/operator-view", response_model=OperatorQueueResponse)
-async def get_operator_view(queue_id: str, db: Session = fastapi.Depends(get_db)):
+async def get_operator_view(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
     """Get queue data for operator dashboard"""
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
     
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    from datetime import timedelta
+    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    if service_day == "tomorrow":
+        target_date += timedelta(days=1)
     
     waiting = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.WAITING,
-        Token.service_date == today
+        Token.service_date == target_date
     ).order_by(Token.joined_at).all()
     
     serving = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.SERVING,
-        Token.service_date == today
+        Token.service_date == target_date
     ).all()
     
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
@@ -540,3 +605,154 @@ async def train_ml_model(db: Session = fastapi.Depends(get_db)):
 async def get_model_info():
     """Get ML model information"""
     return ml_engine.get_model_info()
+
+
+# ============================================================================
+# ML Wait Time Prediction (Live)
+# ============================================================================
+
+@app.get("/queues/{queue_id}/predict")
+async def predict_wait_time(queue_id: str, db: Session = fastapi.Depends(get_db)):
+    """Predict estimated wait time for joining now based on current queue depth"""
+    queue = db.query(Queue).filter(Queue.id == queue_id).first()
+    if not queue:
+        raise fastapi.HTTPException(status_code=404, detail="Queue not found")
+
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    waiting_count = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.state == TokenState.WAITING,
+        Token.service_date == today
+    ).count()
+
+    now = datetime.utcnow()
+    hour = now.hour
+    day_of_week = now.weekday()
+
+    if waiting_count == 0:
+        prediction = 0
+        source = "heuristic"
+    else:
+        prediction = ml_engine.predict(hour, day_of_week, waiting_count)
+        # Fallback heuristic if model is not trained: 8 min per person
+        if prediction is None:
+            prediction = max(1, waiting_count * 8)
+            source = "heuristic"
+        else:
+            source = "ml_model"
+
+    return {
+        "queue_id": queue_id,
+        "current_waiting": waiting_count,
+        "estimated_wait_minutes": round(prediction, 1),
+        "source": source,
+        "is_ml_trained": ml_engine.is_trained,
+        "hour_of_day": hour,
+        "day_of_week": day_of_week,
+    }
+
+
+@app.post("/ml/seed-data")
+async def seed_training_data(db: Session = fastapi.Depends(get_db)):
+    """Seed synthetic training data to bootstrap the ML model"""
+    import random
+    import math
+
+    existing = db.query(TrainingData).count()
+    if existing >= 50:
+        return {"status": "already_seeded", "records": existing}
+
+    records_to_add = []
+    for _ in range(200):
+        hour = random.randint(7, 18)
+        day = random.randint(0, 6)
+        depth = random.randint(0, 30)
+
+        # Realistic wait time: higher at peak hours (9-11am, 2-4pm), less on weekends
+        base_time = depth * 6.5
+        peak_factor = 1.0
+        if 9 <= hour <= 11 or 14 <= hour <= 16:
+            peak_factor = 1.4
+        elif hour < 9 or hour > 17:
+            peak_factor = 0.6
+        if day >= 5:  # weekend
+            peak_factor *= 0.7
+        noise = random.gauss(0, 2)
+        wait_time = max(1, base_time * peak_factor + noise)
+
+        records_to_add.append(TrainingData(
+            id=str(uuid.uuid4()),
+            queue_id=None,
+            hour_of_day=hour,
+            day_of_week=day,
+            queue_depth=depth,
+            wait_time_minutes=round(wait_time, 2)
+        ))
+
+    db.bulk_save_objects(records_to_add)
+    db.commit()
+
+    # Auto-train after seeding
+    all_records = db.query(TrainingData).all()
+    training_data = [
+        {"hour_of_day": t.hour_of_day, "day_of_week": t.day_of_week,
+         "queue_depth": t.queue_depth, "wait_time_minutes": t.wait_time_minutes}
+        for t in all_records
+    ]
+    ml_engine.train(training_data)
+
+    return {"status": "seeded_and_trained", "records_added": len(records_to_add), "model_info": ml_engine.get_model_info()}
+
+
+# ============================================================================
+# Admin Credentials Management
+# ============================================================================
+
+import json
+
+CREDENTIALS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "admin_credentials.json")
+
+def _load_credentials() -> dict:
+    if os.path.exists(CREDENTIALS_FILE):
+        try:
+            with open(CREDENTIALS_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {"pin": "1234"}
+
+def _save_credentials(creds: dict):
+    with open(CREDENTIALS_FILE, "w") as f:
+        json.dump(creds, f)
+
+
+@app.get("/admin/credentials")
+async def get_admin_pin():
+    """Return the current admin PIN (used by frontend to validate login)"""
+    creds = _load_credentials()
+    return {"pin": creds.get("pin", "1234")}
+
+
+class ChangePasswordRequest(fastapi.BaseModel if False else object):
+    pass
+
+from pydantic import BaseModel as _BaseModel
+
+class ChangePasswordRequest(_BaseModel):
+    current_pin: str
+    new_pin: str
+
+
+@app.post("/admin/change-password")
+async def change_admin_password(req: ChangePasswordRequest):
+    """Change the admin PIN"""
+    creds = _load_credentials()
+    if req.current_pin != creds.get("pin", "1234"):
+        raise fastapi.HTTPException(status_code=403, detail="Current PIN is incorrect.")
+    if len(req.new_pin) < 4:
+        raise fastapi.HTTPException(status_code=400, detail="New PIN must be at least 4 digits.")
+    if not req.new_pin.isdigit():
+        raise fastapi.HTTPException(status_code=400, detail="PIN must contain only digits.")
+    creds["pin"] = req.new_pin
+    _save_credentials(creds)
+    return {"status": "success", "message": "PIN updated successfully."}
