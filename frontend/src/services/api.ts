@@ -15,6 +15,8 @@ export const organizationAPI = {
   get: (id: string) => api.get(`/organizations/${id}`),
   listAll: () => api.get('/organizations'),
   getImpact: (id: string) => api.get(`/organizations/${id}/impact`),
+  getOverview: (orgId: string, service_date?: string) =>
+    api.get(`/organizations/${orgId}/overview${service_date ? `?service_date=${service_date}` : ''}`),
 };
 
 // Queue APIs

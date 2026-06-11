@@ -485,22 +485,55 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
         )}
 
         <form onSubmit={handleJoin} className="space-y-5" noValidate>
-          {/* Queue selector */}
+          {/* Department Card Picker — only shown when multiple queues exist */}
           {queues.length > 1 && (
             <div>
-              <label className="label" htmlFor="queue-select">Select Service</label>
-              <div className="relative">
-                <select
-                  id="queue-select"
-                  value={selectedQueueId}
-                  onChange={e => setSelectedQueueId(e.target.value)}
-                  className="input-field appearance-none pr-10 cursor-pointer"
-                >
-                  {queues.map(q => (
-                    <option key={q.id} value={q.id} className="bg-slate-900">{q.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <label className="label">Select Department <span className="text-red-400">*</span></label>
+              <div className="grid grid-cols-1 gap-2.5 mt-1">
+                {queues.map(q => {
+                  const isPaused = q.is_accepting_tokens === 0;
+                  const isSelected = selectedQueueId === q.id;
+                  return (
+                    <button
+                      key={q.id}
+                      type="button"
+                      disabled={isPaused}
+                      onClick={() => !isPaused && setSelectedQueueId(q.id)}
+                      className={`w-full text-left px-4 py-3.5 rounded-xl border transition-all flex items-center gap-4 ${
+                        isPaused
+                          ? 'border-white/[0.05] bg-white/[0.01] opacity-50 cursor-not-allowed'
+                          : isSelected
+                          ? 'border-blue-500/40 bg-blue-500/10 ring-1 ring-blue-500/20'
+                          : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.15] hover:bg-white/[0.05] cursor-pointer'
+                      }`}
+                    >
+                      {/* Selection indicator */}
+                      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
+                        isSelected ? 'border-blue-400 bg-blue-400' : 'border-slate-600'
+                      }`}>
+                        {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-semibold text-white truncate">{q.name}</p>
+                          {isPaused && (
+                            <span className="shrink-0 text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 border border-red-500/20">Paused</span>
+                          )}
+                        </div>
+                        {q.description && (
+                          <p className="text-xs text-slate-500 mt-0.5 truncate">{q.description}</p>
+                        )}
+                      </div>
+                      {!isPaused && (
+                        <div className="text-right shrink-0">
+                          <p className={`text-[10px] font-bold uppercase tracking-wider ${
+                            isSelected ? 'text-blue-400' : 'text-slate-600'
+                          }`}>Selected</p>
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           )}

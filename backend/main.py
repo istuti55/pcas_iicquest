@@ -21,7 +21,7 @@ from schemas import (
     QueueCreate, QueueUpdate, QueueResponse, QueueDetailResponse, QueueResetRequest,
     TokenCreate, TokenResponse, TokenSecureResponse, TokenStateUpdate, TokenListResponse,
     CounterCreate, CounterUpdate, CounterResponse,
-    QueueStatsResponse, OperatorQueueResponse,
+    QueueStatsResponse, OperatorQueueResponse, QueueOverviewItem,
     HealthResponse, ImpactStatsResponse
 )
 from ml_engine import ml_engine
@@ -284,6 +284,79 @@ async def list_queues(org_id: str, service_date: str = None, db: Session = fasta
     return queues
 
 
+@app.get("/organizations/{org_id}/overview", response_model=list[QueueOverviewItem])
+async def get_org_overview(org_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
+    """Get a summary overview of all queues (departments) for an organization on a given date."""
+    from datetime import date as date_type
+    from zoneinfo import ZoneInfo
+
+    org = db.query(Organization).filter(Organization.id == org_id).first()
+    if not org:
+        raise fastapi.HTTPException(status_code=404, detail="Organization not found")
+
+    NPT = ZoneInfo("Asia/Kathmandu")
+    if service_date:
+        try:
+            svc = date_type.fromisoformat(service_date)
+        except ValueError:
+            svc = datetime.now(NPT).date()
+    else:
+        svc = datetime.now(NPT).date()
+
+    target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+
+    queues = db.query(Queue).filter(Queue.organization_id == org_id).all()
+    result = []
+
+    for q in queues:
+        # Date-specific accepting status
+        date_status = db.query(QueueDateStatus).filter(
+            QueueDateStatus.queue_id == q.id,
+            QueueDateStatus.service_date == target_date
+        ).first()
+        is_accepting = date_status.is_accepting_tokens if date_status else q.is_accepting_tokens
+
+        total_waiting = db.query(Token).filter(
+            Token.queue_id == q.id,
+            Token.state == TokenState.WAITING,
+            Token.service_date == target_date
+        ).count()
+
+        total_serving = db.query(Token).filter(
+            Token.queue_id == q.id,
+            Token.state == TokenState.SERVING,
+            Token.service_date == target_date
+        ).count()
+
+        total_completed_today = db.query(Token).filter(
+            Token.queue_id == q.id,
+            Token.state == TokenState.COMPLETED,
+            Token.service_date == target_date
+        ).count()
+
+        # Next token to call
+        next_token = db.query(Token).filter(
+            Token.queue_id == q.id,
+            Token.state == TokenState.WAITING,
+            Token.service_date == target_date
+        ).order_by(Token.number).first()
+
+        result.append(QueueOverviewItem(
+            queue_id=q.id,
+            queue_name=q.name,
+            description=q.description,
+            active=q.active,
+            is_accepting_tokens=is_accepting,
+            total_waiting=total_waiting,
+            total_serving=total_serving,
+            total_completed_today=total_completed_today,
+            daily_limit=q.daily_limit or 0,
+            next_token=next_token,
+        ))
+
+    return result
+
+
 @app.get("/queues/{queue_id}", response_model=QueueResponse)
 async def get_queue(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
     """Get queue by ID"""
@@ -446,9 +519,9 @@ async def create_token(
             )
 
     # ── Assign next token number (resets to 1 each day) ────────────────────
-    # Use text('...') for SQLite date comparison if needed, or ensure midnight UTC is consistent
-    last_token = db.query(Token).filter(
-        Token.queue_id == queue_id,
+    # Synchronized across the entire organization as requested
+    last_token = db.query(Token).join(Queue).filter(
+        Queue.organization_id == queue.organization_id,
         Token.service_date == service_date
     ).order_by(Token.number.desc()).first()
     next_number = (last_token.number + 1) if last_token else 1

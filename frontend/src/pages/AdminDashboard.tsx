@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { queueAPI, tokenAPI, adminAPI, mlAPI } from '../services/api';
+import { queueAPI, tokenAPI, adminAPI, organizationAPI } from '../services/api';
 import StatsCard from '../components/StatsCard';
 import TokenBadge from '../components/TokenBadge';
 import {
   Users,
   ChevronRight, LogOut, Phone,
-  ArrowRight, ShieldCheck, Activity, KeyRound, CheckCircle2, Settings, CalendarDays
+  ArrowRight, ShieldCheck, Activity, KeyRound, CheckCircle2, Settings, CalendarDays,
+  LayoutGrid, PlayCircle, PauseCircle, ChevronDown
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -19,7 +20,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   const [queueName, setQueueName] = useState('');
   const [stats, setStats] = useState<any>(null);
   const [opData, setOpData] = useState<any>(null);
-  const [mlPrediction, setMlPrediction] = useState<any>(null);
   const [allQueues, setAllQueues] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [calling, setCalling] = useState(false);
@@ -30,10 +30,14 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
   const [serviceDate, setServiceDate] = useState<string>(todayStr());
-  const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'departments' | 'settings'>('departments');
   const [isActive, setIsActive] = useState<boolean>(true);
   const [isAcceptingTokens, setIsAcceptingTokens] = useState<boolean>(true);
-  const toggleLocked = useRef(false); // Prevents fetchAll from overriding toggle state mid-flight
+  const toggleLocked = useRef(false);
+
+  // Org-wide overview data
+  const [orgOverview, setOrgOverview] = useState<any[]>([]);
+  const [deptCalling, setDeptCalling] = useState<Record<string, boolean>>({});
 
   // Configuration state
   const [configName, setConfigName] = useState('');
@@ -54,22 +58,16 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   const [pwLoading, setPwLoading] = useState(false);
   const [pwMsg, setPwMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
-  // ML seeding
-  const [mlSeeding, setMlSeeding] = useState(false);
-  const [mlMsg, setMlMsg] = useState<string | null>(null);
-
   const fetchAll = async () => {
     try {
-      const [qRes, sRes, opRes, mlRes, listRes] = await Promise.all([
+      const [qRes, sRes, opRes, listRes] = await Promise.all([
         queueAPI.get(queueId),
         queueAPI.getStats(queueId, serviceDate),
         queueAPI.getOperatorView(queueId, serviceDate),
-        queueAPI.predict(queueId).catch(() => ({ data: null })),
         queueAPI.list(orgId),
       ]);
       setQueueName(qRes.data.name);
-      
-      // Initialize config fields only if not currently typing in them
+
       if (document.activeElement?.id !== 'configNameInput' && document.activeElement?.id !== 'configDescInput') {
         setConfigName(qRes.data.name || '');
         setConfigDesc(qRes.data.description || '');
@@ -81,21 +79,28 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       }
       if (!toggleLocked.current) {
         setIsActive(qRes.data.active === 1);
-        // Use the date-specific status from stats if available
         setIsAcceptingTokens(sRes.data.is_accepting_tokens === 1);
       }
       setStats(sRes.data);
       setOpData(opRes.data);
       setAllQueues(listRes.data);
-      if (mlRes.data) setMlPrediction(mlRes.data);
     } catch {}
     setLoading(false);
   };
 
+  const fetchOrgOverview = async () => {
+    try {
+      const res = await organizationAPI.getOverview(orgId, serviceDate);
+      setOrgOverview(res.data);
+    } catch {}
+  };
+
   useEffect(() => {
     fetchAll();
-    const t = setInterval(fetchAll, 3000);
-    return () => clearInterval(t);
+    fetchOrgOverview();
+    const t1 = setInterval(fetchAll, 3000);
+    const t2 = setInterval(fetchOrgOverview, 3000);
+    return () => { clearInterval(t1); clearInterval(t2); };
   }, [queueId, serviceDate]);
 
   const handleCallNext = async () => {
@@ -107,6 +112,28 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       await fetchAll();
     } catch {}
     setCalling(false);
+  };
+
+  const handleDeptCallNext = async (dept: any) => {
+    if (!dept.next_token) return;
+    setDeptCalling(prev => ({ ...prev, [dept.queue_id]: true }));
+    try {
+      await tokenAPI.updateState(dept.next_token.id, 'called');
+      await tokenAPI.updateState(dept.next_token.id, 'serving');
+      await fetchOrgOverview();
+    } catch {}
+    setDeptCalling(prev => ({ ...prev, [dept.queue_id]: false }));
+  };
+
+  const handleDeptTogglePause = async (dept: any) => {
+    const newVal = dept.is_accepting_tokens === 0 ? 1 : 0;
+    try {
+      await queueAPI.update(dept.queue_id, {
+        is_accepting_tokens: newVal,
+        service_date: serviceDate,
+      });
+      await fetchOrgOverview();
+    } catch {}
   };
 
   const handleComplete = async (id: string) => {
@@ -122,8 +149,8 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     setConfigLoading(true); setConfigMsg(null);
     try {
       const newLimit = parseInt(localDailyLimit) || 0;
-      await queueAPI.update(queueId, { 
-        name: configName, 
+      await queueAPI.update(queueId, {
+        name: configName,
         description: configDesc,
         daily_limit: newLimit,
         active: isActive ? 1 : 0,
@@ -146,6 +173,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       setCreateQueueMsg({ type: 'success', text: `Successfully created queue: ${res.data.name}` });
       setNewQueueName(''); setNewQueueDesc('');
       await fetchAll();
+      await fetchOrgOverview();
     } catch (err: any) {
       setCreateQueueMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to create queue.' });
     }
@@ -156,17 +184,15 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     toggleLocked.current = true;
     setIsAcceptingTokens(newVal);
     try {
-      await queueAPI.update(queueId, { 
+      await queueAPI.update(queueId, {
         is_accepting_tokens: newVal ? 1 : 0,
         service_date: serviceDate
       });
     } catch (err: any) {
-      setIsAcceptingTokens(!newVal); // Rollback on error
-      // Show a non-blocking toast-style message instead of alert
+      setIsAcceptingTokens(!newVal);
       setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to update token generation status.' });
       setTimeout(() => setConfigMsg(null), 4000);
     } finally {
-      // Unlock after 2s so that the next fetchAll poll reflects the saved DB state
       setTimeout(() => { toggleLocked.current = false; }, 2000);
     }
   };
@@ -194,9 +220,9 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     );
   }
 
-  const navBtn = (tab: typeof activeTab, label: string, Icon: any, extra?: () => void) => (
+  const navBtn = (tab: typeof activeTab, label: string, Icon: any) => (
     <button
-      onClick={() => { setActiveTab(tab); extra?.(); }}
+      onClick={() => setActiveTab(tab)}
       className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition-all ${
         activeTab === tab
           ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
@@ -237,13 +263,15 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                 ))}
               </select>
               <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <ChevronDown size={14} />
               </div>
             </div>
           </div>
         )}
 
         <nav className="flex-1 space-y-1.5">
+          {navBtn('departments', 'All Departments', LayoutGrid)}
+          <div className="h-px bg-white/[0.05] my-3" />
           {navBtn('overview', 'Live Workspace', Activity)}
           <div className="h-px bg-white/[0.05] my-3" />
           {navBtn('settings', 'System Settings', Settings)}
@@ -262,60 +290,62 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
         <header className="px-8 py-6 flex items-center justify-between sticky top-0 z-20 bg-[#0a0f1e]/60 backdrop-blur-xl border-b border-white/[0.06]">
           <div>
             <h2 className="text-2xl font-bold text-white tracking-tight">
-              {activeTab === 'overview' ? 'Live Workspace' : 'System Settings'}
+              {activeTab === 'departments' ? 'All Departments' : activeTab === 'overview' ? 'Live Workspace' : 'System Settings'}
             </h2>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="live-dot" style={{ width: 6, height: 6 }} />
-              <p className="text-slate-500 text-xs font-medium">{queueName}</p>
+              <p className="text-slate-500 text-xs font-medium">
+                {activeTab === 'departments' ? `${orgOverview.length} department${orgOverview.length !== 1 ? 's' : ''}` : queueName}
+              </p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Date filter — only shown in Live Workspace */}
+            {/* Date filter */}
+            <div className="flex items-center gap-2 bg-white/[0.03] border border-white/[0.08] px-3 py-2 rounded-2xl">
+              <CalendarDays size={14} className="text-slate-500 shrink-0" />
+              <input
+                type="date"
+                value={serviceDate}
+                onChange={(e) => setServiceDate(e.target.value || todayStr())}
+                className="bg-transparent text-slate-300 text-xs font-semibold outline-none cursor-pointer"
+                title="Filter by service date"
+              />
+              {serviceDate !== todayStr() && (
+                <button
+                  onClick={() => setServiceDate(todayStr())}
+                  className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors ml-1 whitespace-nowrap"
+                >
+                  Today
+                </button>
+              )}
+            </div>
+
+            {/* Token gen toggle — only for single queue workspace */}
             {activeTab === 'overview' && (
-              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/[0.08] px-3 py-2 rounded-2xl">
-                <CalendarDays size={14} className="text-slate-500 shrink-0" />
-                <input
-                  type="date"
-                  value={serviceDate}
-                  onChange={(e) => setServiceDate(e.target.value || todayStr())}
-                  className="bg-transparent text-slate-300 text-xs font-semibold outline-none cursor-pointer"
-                  title="Filter by service date"
-                />
-                {serviceDate !== todayStr() && (
-                  <button
-                    onClick={() => setServiceDate(todayStr())}
-                    className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors ml-1 whitespace-nowrap"
-                    title="Back to today"
-                  >
-                    Today
-                  </button>
-                )}
+              <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] pl-4 pr-3 py-2 rounded-2xl">
+                <div className="text-right">
+                  <p className={`text-[10px] font-bold uppercase tracking-wider leading-none ${isAcceptingTokens ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {isAcceptingTokens ? 'Accepting' : 'Paused'}
+                  </p>
+                  <p className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">Token Generation</p>
+                </div>
+                <button
+                  onClick={() => handleToggleAccepting(!isAcceptingTokens)}
+                  className={`w-11 h-6 rounded-full relative transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#0a0f1e] ${
+                    isAcceptingTokens ? 'bg-emerald-500/20 focus:ring-emerald-500/30' : 'bg-red-500/20 focus:ring-red-500/30'
+                  }`}
+                >
+                  <div className={`absolute top-1 w-4 h-4 rounded-full transition-all duration-300 shadow-sm ${
+                    isAcceptingTokens ? 'right-1 bg-emerald-400' : 'left-1 bg-red-400'
+                  }`} />
+                </button>
               </div>
             )}
 
-            <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] pl-4 pr-3 py-2 rounded-2xl">
-              <div className="text-right">
-                <p className={`text-[10px] font-bold uppercase tracking-wider leading-none ${isAcceptingTokens ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {isAcceptingTokens ? 'Accepting' : 'Paused'}
-                </p>
-                <p className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">Token Generation</p>
-              </div>
-              <button 
-                onClick={() => handleToggleAccepting(!isAcceptingTokens)}
-                className={`w-11 h-6 rounded-full relative transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#0a0f1e] ${
-                  isAcceptingTokens ? 'bg-emerald-500/20 focus:ring-emerald-500/30' : 'bg-red-500/20 focus:ring-red-500/30'
-                }`}
-              >
-                <div className={`absolute top-1 w-4 h-4 rounded-full transition-all duration-300 shadow-sm ${
-                  isAcceptingTokens ? 'right-1 bg-emerald-400' : 'left-1 bg-red-400'
-                }`} />
-              </button>
-            </div>
-
             <div className="w-px h-8 bg-white/[0.06] hidden sm:block" />
 
-            <button 
+            <button
               onClick={onLogout}
               className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all group"
               title="Sign Out"
@@ -325,33 +355,148 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
           </div>
         </header>
 
-        <div className="p-10 md:p-16 space-y-14 max-w-7xl">
+        <div className="p-6 md:p-10 space-y-10 max-w-7xl w-full">
 
-          {/* ── OVERVIEW TAB ── */}
+          {/* ══════════════════════════════════════════════════════════════════
+              ALL DEPARTMENTS TAB
+          ══════════════════════════════════════════════════════════════════ */}
+          {activeTab === 'departments' && (
+            <div className="space-y-6 animate-in">
+              {orgOverview.length === 0 ? (
+                <div className="glass-card !p-16 text-center">
+                  <p className="text-slate-600 font-black text-xs uppercase tracking-[0.4em]">No Departments Found</p>
+                  <p className="text-slate-500 text-sm mt-2">Create a department from the System Settings tab.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                  {orgOverview.map((dept) => {
+                    const isPaused = dept.is_accepting_tokens === 0;
+                    const isCalling = deptCalling[dept.queue_id];
+                    return (
+                      <div
+                        key={dept.queue_id}
+                        className="rounded-2xl border border-white/[0.07] bg-white/[0.02] flex flex-col overflow-hidden transition-all hover:border-white/[0.12] hover:bg-white/[0.03]"
+                      >
+                        {/* Card Header */}
+                        <div className="flex items-start justify-between p-5 pb-4 border-b border-white/[0.06]">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className={`w-2 h-2 rounded-full shrink-0 ${isPaused ? 'bg-red-400' : 'bg-emerald-400 animate-pulse'}`} />
+                              <p className="text-white font-bold text-base truncate">{dept.queue_name}</p>
+                            </div>
+                            {dept.description && (
+                              <p className="text-slate-500 text-xs ml-4 truncate">{dept.description}</p>
+                            )}
+                          </div>
+                          {/* Pause / Resume toggle */}
+                          <button
+                            onClick={() => handleDeptTogglePause(dept)}
+                            title={isPaused ? 'Resume token generation' : 'Pause token generation'}
+                            className={`ml-3 shrink-0 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all border ${
+                              isPaused
+                                ? 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
+                                : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400 hover:bg-emerald-500/20'
+                            }`}
+                          >
+                            {isPaused
+                              ? <><PlayCircle size={12} /> Resume</>
+                              : <><PauseCircle size={12} /> Pause</>
+                            }
+                          </button>
+                        </div>
+
+                        {/* Stats Row */}
+                        <div className="grid grid-cols-3 gap-0 border-b border-white/[0.06]">
+                          {[
+                            { label: 'Waiting', value: dept.total_waiting, color: 'text-blue-400' },
+                            { label: 'Serving', value: dept.total_serving, color: 'text-amber-400' },
+                            { label: 'Done', value: dept.total_completed_today, color: 'text-emerald-400' },
+                          ].map((s, i) => (
+                            <div key={s.label} className={`p-4 text-center ${i < 2 ? 'border-r border-white/[0.06]' : ''}`}>
+                              <p className={`text-2xl font-black ${s.color}`}>{s.value}</p>
+                              <p className="text-[10px] text-slate-600 font-bold uppercase tracking-wider mt-0.5">{s.label}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Next Token */}
+                        <div className="p-4 flex-1">
+                          {dept.next_token ? (
+                            <div className="flex items-center gap-3">
+                              <TokenBadge number={dept.next_token.number} status="waiting" size="sm" />
+                              <div className="flex-1 min-w-0">
+                                {dept.next_token.name && <p className="text-slate-200 text-sm font-semibold truncate">{dept.next_token.name}</p>}
+                                {dept.next_token.phone && (
+                                  <div className="flex items-center gap-1 mt-0.5">
+                                    <Phone size={10} className="text-slate-500" />
+                                    <p className="text-slate-500 text-xs truncate">{dept.next_token.phone}</p>
+                                  </div>
+                                )}
+                                {dept.next_token.verification_pin && (
+                                  <p className="text-[10px] text-blue-400/70 mt-1 font-mono">PIN: {dept.next_token.verification_pin}</p>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-slate-700 text-xs font-black uppercase tracking-wider text-center py-2">Queue Clear</p>
+                          )}
+                        </div>
+
+                        {/* Actions */}
+                        <div className="p-4 pt-0 flex gap-2">
+                          <button
+                            onClick={() => handleDeptCallNext(dept)}
+                            disabled={!dept.next_token || isCalling || isPaused}
+                            className="flex-1 h-10 btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            {isCalling
+                              ? <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
+                              : <span className="flex items-center gap-1.5 justify-center">Call Next <ArrowRight size={15} /></span>
+                            }
+                          </button>
+                          <button
+                            onClick={() => { onQueueChange(dept.queue_id); setActiveTab('overview'); }}
+                            className="px-3 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] text-slate-400 hover:text-white hover:bg-white/[0.08] transition-all text-sm font-semibold"
+                            title="Manage this department"
+                          >
+                            Manage
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ══════════════════════════════════════════════════════════════════
+              LIVE WORKSPACE TAB
+          ══════════════════════════════════════════════════════════════════ */}
           {activeTab === 'overview' && (
             <>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 animate-in" style={{ animationDelay: '0.2s' }}>
                 {stats && (
                   <>
-                    <StatsCard 
-                      label="Next Turn" 
-                      value={opData?.next_token ? `#${opData.next_token.number}` : '—'} 
-                      icon={<ChevronRight size={18} className="text-blue-400 opacity-50" />} 
+                    <StatsCard
+                      label="Next Turn"
+                      value={opData?.next_token ? `#${opData.next_token.number}` : '—'}
+                      icon={<ChevronRight size={18} className="text-blue-400 opacity-50" />}
                     />
-                    <StatsCard 
-                      label="Served Today" 
-                      value={stats.total_completed_today} 
-                      icon={<CheckCircle2 size={18} className="text-emerald-400 opacity-50" />} 
+                    <StatsCard
+                      label="Served Today"
+                      value={stats.total_completed_today}
+                      icon={<CheckCircle2 size={18} className="text-emerald-400 opacity-50" />}
                     />
-                    <StatsCard 
-                      label="Skipped Today" 
-                      value={stats.total_skipped} 
-                      icon={<Users size={18} className="text-red-400 opacity-50" />} 
+                    <StatsCard
+                      label="Skipped Today"
+                      value={stats.total_skipped}
+                      icon={<Users size={18} className="text-red-400 opacity-50" />}
                     />
-                    <StatsCard 
-                      label="Waiting In Queue" 
-                      value={stats.total_waiting} 
-                      icon={<Users size={18} className="text-purple-400 opacity-50" />} 
+                    <StatsCard
+                      label="Waiting In Queue"
+                      value={stats.total_waiting}
+                      icon={<Users size={18} className="text-purple-400 opacity-50" />}
                     />
                   </>
                 )}
@@ -466,13 +611,15 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
             </>
           )}
 
-          {/* ── SYSTEM SETTINGS TAB ── */}
+          {/* ══════════════════════════════════════════════════════════════════
+              SETTINGS TAB
+          ══════════════════════════════════════════════════════════════════ */}
           {activeTab === 'settings' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 animate-in">
-              
-              {/* Left Column: Queue Params & New Queue */}
+
+              {/* Left Column */}
               <div className="space-y-10">
-                {/* Queue Parameters Card */}
+                {/* Queue Parameters */}
                 <div className="glass-card !p-10">
                   <div className="flex items-center gap-4 mb-8">
                     <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
@@ -480,7 +627,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                     </div>
                     <div>
                       <h3 className="text-xl font-black text-white">Queue Parameters</h3>
-                      <p className="text-xs text-slate-500 mt-1">Configure service settings and daily token limit.</p>
+                      <p className="text-xs text-slate-500 mt-1">Configure settings for the currently active queue.</p>
                     </div>
                   </div>
 
@@ -498,46 +645,20 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                   <form onSubmit={handleUpdateConfiguration} className="space-y-6">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Queue Name</label>
-                      <input 
-                        id="configNameInput"
-                        type="text" 
-                        value={configName}
-                        onChange={e => setConfigName(e.target.value)}
-                        className="input-premium h-14 text-lg" 
-                        placeholder="e.g., Main Reception" 
-                        required 
-                      />
+                      <input id="configNameInput" type="text" value={configName} onChange={e => setConfigName(e.target.value)} className="input-premium h-14 text-lg" placeholder="e.g., Main Reception" required />
                     </div>
-                    
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description</label>
-                      <textarea 
-                        id="configDescInput"
-                        value={configDesc}
-                        onChange={e => setConfigDesc(e.target.value)}
-                        className="input-premium py-4 text-sm resize-none h-24" 
-                        placeholder="What is this queue used for?" 
-                      />
+                      <textarea id="configDescInput" value={configDesc} onChange={e => setConfigDesc(e.target.value)} className="input-premium py-4 text-sm resize-none h-24" placeholder="What is this queue used for?" />
                     </div>
-
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Daily Token Limit</label>
-                      <input 
-                        id="dailyLimitInput"
-                        type="text" 
-                        value={localDailyLimit}
-                        onChange={(e) => setLocalDailyLimit(e.target.value.replace(/[^0-9]/g, ''))}
-                        className="input-premium h-14 text-lg" 
-                        placeholder="0 = Unlimited" 
-                      />
-                      <p className="text-[10px] text-slate-500">Set the maximum tokens issued per day. Set to 0 for unlimited.</p>
-                             <div className="flex flex-col gap-4 bg-white/[0.03] border border-white/[0.08] p-5 rounded-2xl">
-                      <div className="text-xs text-slate-400 font-medium px-1">
-                        Use the toggle in the top bar to pause or resume new token generation.
+                      <input id="dailyLimitInput" type="text" value={localDailyLimit} onChange={(e) => setLocalDailyLimit(e.target.value.replace(/[^0-9]/g, ''))} className="input-premium h-14 text-lg" placeholder="0 = Unlimited" />
+                      <p className="text-[10px] text-slate-500">Set the maximum tokens issued per day. 0 = Unlimited.</p>
+                      <div className="flex flex-col gap-4 bg-white/[0.03] border border-white/[0.08] p-5 rounded-2xl">
+                        <div className="text-xs text-slate-400 font-medium px-1">Use the toggle in the top bar (Live Workspace tab) to pause or resume token generation for this queue.</div>
                       </div>
                     </div>
-             </div>
-
                     <div className="pt-2">
                       <button type="submit" disabled={configLoading} className="btn-primary w-full h-14">
                         {configLoading ? 'Saving...' : 'Save Settings'}
@@ -546,15 +667,15 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                   </form>
                 </div>
 
-                {/* Create Additional Queue Card */}
+                {/* Create New Department */}
                 <div className="glass-card !p-10">
                   <div className="flex items-center gap-4 mb-8">
                     <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
-                      <Users size={22} className="text-emerald-400" />
+                      <LayoutGrid size={22} className="text-emerald-400" />
                     </div>
                     <div>
-                      <h3 className="text-xl font-black text-white">Create Additional Service</h3>
-                      <p className="text-xs text-slate-500 mt-1">Add a new service queue (e.g. Pharmacy, Billing) to this organization.</p>
+                      <h3 className="text-xl font-black text-white">Add Department</h3>
+                      <p className="text-xs text-slate-500 mt-1">Create a new service queue (e.g., Library, Accounts, Admission).</p>
                     </div>
                   </div>
 
@@ -571,39 +692,24 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
 
                   <form onSubmit={handleCreateQueue} className="space-y-6">
                     <div className="space-y-2">
-                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New Queue Name</label>
-                      <input 
-                        type="text" 
-                        value={newQueueName}
-                        onChange={e => setNewQueueName(e.target.value)}
-                        className="input-premium h-14 text-lg" 
-                        placeholder="e.g., Fast Track" 
-                        required 
-                      />
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Department Name</label>
+                      <input type="text" value={newQueueName} onChange={e => setNewQueueName(e.target.value)} className="input-premium h-14 text-lg" placeholder="e.g., Library, Accounts" required />
                     </div>
-                    
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description</label>
-                      <textarea 
-                        value={newQueueDesc}
-                        onChange={e => setNewQueueDesc(e.target.value)}
-                        className="input-premium py-4 text-sm resize-none h-20" 
-                        placeholder="Short description of this new queue..." 
-                      />
+                      <textarea value={newQueueDesc} onChange={e => setNewQueueDesc(e.target.value)} className="input-premium py-4 text-sm resize-none h-20" placeholder="Short description of this department..." />
                     </div>
-                    
                     <div className="pt-2">
                       <button type="submit" disabled={createQueueLoading || !newQueueName} className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white font-black uppercase tracking-[0.2em] rounded-2xl transition-all">
-                        {createQueueLoading ? 'Creating...' : 'Create Queue'}
+                        {createQueueLoading ? 'Creating...' : '+ Add Department'}
                       </button>
                     </div>
                   </form>
                 </div>
               </div>
 
-              {/* Right Column: Security PIN & ML Seeding */}
+              {/* Right Column: Security */}
               <div className="space-y-10">
-                {/* Change PIN Card */}
                 <div className="glass-card !p-10">
                   <div className="flex items-center gap-4 mb-8">
                     <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
@@ -629,33 +735,22 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                   <form onSubmit={handleChangePassword} className="space-y-5">
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Current PIN</label>
-                      <input type="password" inputMode="numeric" maxLength={8} value={pwCurrent}
-                        onChange={e => setPwCurrent(e.target.value.replace(/\D/g, ''))}
-                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Current 4-digit PIN" required />
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwCurrent} onChange={e => setPwCurrent(e.target.value.replace(/\D/g, ''))} className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Current 4-digit PIN" required />
                     </div>
-                    
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New PIN</label>
-                      <input type="password" inputMode="numeric" maxLength={8} value={pwNew}
-                        onChange={e => setPwNew(e.target.value.replace(/\D/g, ''))}
-                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="New 4-digit PIN" required />
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwNew} onChange={e => setPwNew(e.target.value.replace(/\D/g, ''))} className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="New 4-digit PIN" required />
                     </div>
-                    
                     <div className="space-y-2">
                       <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Confirm New PIN</label>
-                      <input type="password" inputMode="numeric" maxLength={8} value={pwConfirm}
-                        onChange={e => setPwConfirm(e.target.value.replace(/\D/g, ''))}
-                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Repeat new PIN" required />
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwConfirm} onChange={e => setPwConfirm(e.target.value.replace(/\D/g, ''))} className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Repeat new PIN" required />
                     </div>
-                    
                     <button type="submit" disabled={pwLoading} className="btn-primary w-full h-14 mt-2">
                       {pwLoading ? 'Updating...' : 'Update PIN'}
                     </button>
                   </form>
                 </div>
-
               </div>
-
             </div>
           )}
 
@@ -665,6 +760,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       {/* Mobile Bottom Nav */}
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0d1525]/95 backdrop-blur-xl border-t border-white/[0.06] flex items-center justify-around px-2 py-2">
         {[
+          { tab: 'departments' as const, label: 'Departments', Icon: LayoutGrid },
           { tab: 'overview' as const, label: 'Workspace', Icon: Activity },
           { tab: 'settings' as const, label: 'Settings', Icon: Settings },
         ].map(({ tab, label, Icon }) => (

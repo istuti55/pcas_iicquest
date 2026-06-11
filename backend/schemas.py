@@ -175,6 +175,23 @@ class OperatorQueueResponse(BaseModel):
     is_accepting_tokens: int
 
 
+# Org-wide overview (all departments)
+class QueueOverviewItem(BaseModel):
+    queue_id: str
+    queue_name: str
+    description: Optional[str]
+    active: int
+    is_accepting_tokens: int
+    total_waiting: int
+    total_serving: int
+    total_completed_today: int
+    daily_limit: int
+    next_token: Optional[TokenResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
 # Health check
 class HealthResponse(BaseModel):
     status: str
