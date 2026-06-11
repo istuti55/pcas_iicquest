@@ -1,11 +1,11 @@
 # Pālo: Smart Queue Management
 
-![Pālo Logo](file:///C:/Users/Dell/.gemini/antigravity/brain/c5008264-bda8-4ec7-8db8-1090d12ee2b9/palo_logo_premium_1781194621065.png)
-
 ## 📋 Project Information
-- **Team Name**: [Pālo Collective]
+- **Team Name**: PCAS
 - **Members**:
-  - [Member Name 1]
+  - Angel Mainali
+  - Stuti Bagale Thapa
+  - Uday Kumar Dev
 
 ## 🚨 Problem Statement
 Physical queues in government offices, hospitals, and busy service centers lead to extreme time wastage, overcrowding, and a poor service experience. Citizens often wait for hours without any visibility into their actual turn time, leading to frustration and inefficiency.
@@ -16,7 +16,7 @@ Pālo (पालो - "Your Turn") is a premium, real-time queue management syst
 - **AI-Powered Predictions**: A Machine Learning engine predicts wait times based on live queue depth and history.
 - **Triage & Priority**: A dynamic scoring system ensures emergency cases are served first while preventing starvation for normal users.
 - **Automated SMS Updates**: Integration with Infobip for booking confirmations and "turn is near" reminders.
-- **Nepal Standard Time (NPT) Sync**: Full synchronization with NPT for all reported times and live clocks.
+
 
 ## 🛠️ Tech Stack Used
 - **Frontend**: React (Vite), Tailwind CSS, Lucide-React, Framer Motion.
@@ -48,6 +48,9 @@ Pālo (पालो - "Your Turn") is a premium, real-time queue management syst
 
 ## 📸 Demo & Screenshots
 *(Screenshots representing the User Portal and Admin Dashboard)*
+![alt text](image-1.png)
+![alt text](image-2.png)![alt text](image-3.png)
 
 ---
+
 **Pālo** · Smart. Simple. Fast.
