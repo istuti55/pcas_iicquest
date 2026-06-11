@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { tokenAPI, queueAPI } from '../services/api';
 import TokenBadge from '../components/TokenBadge';
-import { ArrowLeft, Clock, Hash, Users, AlertCircle, Sparkles, ArrowRight, Brain, Zap } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, Users, AlertCircle, Sparkles, ArrowRight, Brain, Zap, ShieldAlert } from 'lucide-react';
 
 interface UserPortalProps {
   orgId: string;
@@ -162,6 +162,16 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     }
   };
 
+  const handleConfirm = async () => {
+    if (!token) return;
+    try {
+      const res = await tokenAPI.confirm(token.id);
+      setToken(res.data);
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to confirm attendance.');
+    }
+  };
+
   // ── Token tracking ─────────────────────────────────────────────────────────
   if (token) {
     return (
@@ -217,6 +227,26 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
               )}
             </div>
           </div>
+
+          {/* High Risk Confirmation Required */}
+          {token.requires_confirmation === 1 && !token.is_confirmed && !isCompleted && !isCancelled && (
+            <div className="glass rounded-[2rem] p-8 mb-10 text-center relative overflow-hidden border border-red-500/30 bg-red-500/5 animate-pulse">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/20 blur-3xl -mr-16 -mt-16 rounded-full" />
+              <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/30">
+                <ShieldAlert size={20} className="text-red-400" />
+              </div>
+              <h3 className="text-2xl font-black text-white mb-2 tracking-tight">Action Required</h3>
+              <p className="text-sm text-slate-400 mb-6 font-medium px-4">
+                Based on your attendance history, you are required to manually confirm your appointment to keep this slot.
+              </p>
+              <button
+                onClick={handleConfirm}
+                className="w-full bg-red-500 hover:bg-red-400 text-white font-black uppercase tracking-widest text-[11px] py-4 rounded-xl transition-colors shadow-[0_0_20px_rgba(239,68,68,0.3)]"
+              >
+                Confirm Attendance
+              </button>
+            </div>
+          )}
 
           {/* Verification PIN Display */}
           <div className="glass rounded-[2rem] p-8 mb-10 text-center relative group">

@@ -14,6 +14,7 @@ export const organizationAPI = {
   create: (name: string) => api.post('/organizations', { name }),
   get: (id: string) => api.get(`/organizations/${id}`),
   listAll: () => api.get('/organizations'),
+  getImpact: (id: string) => api.get(`/organizations/${id}/impact`),
 };
 
 // Queue APIs
@@ -41,6 +42,7 @@ export const tokenAPI = {
   },
   updateState: (id: string, state: string) =>
     api.patch(`/tokens/${id}`, { state }),
+  confirm: (id: string) => api.post(`/tokens/${id}/confirm`),
 };
 
 // Counter APIs

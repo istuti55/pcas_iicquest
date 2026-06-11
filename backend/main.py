@@ -20,9 +20,50 @@ from schemas import (
     TokenCreate, TokenResponse, TokenSecureResponse, TokenStateUpdate, TokenListResponse,
     CounterCreate, CounterUpdate, CounterResponse,
     QueueStatsResponse, OperatorQueueResponse,
-    HealthResponse
+    HealthResponse, ImpactStatsResponse
 )
 from ml_engine import ml_engine
+from sms_service import send_sms
+import asyncio
+from database import SessionLocal
+from pydantic import BaseModel
+
+async def run_reminder_loop():
+    while True:
+        try:
+            db = SessionLocal()
+            now = datetime.utcnow()
+            # Find tokens that are WAITING and haven't had a reminder sent
+            waiting_tokens = db.query(Token).filter(
+                Token.state == TokenState.WAITING,
+                Token.reminder_sent == 0,
+                Token.phone != None
+            ).all()
+            
+            for token in waiting_tokens:
+                # Recalculate estimated wait
+                tokens_ahead = db.query(Token).filter(
+                    Token.queue_id == token.queue_id,
+                    Token.service_date == token.service_date,
+                    Token.state == TokenState.WAITING,
+                    Token.joined_at < token.joined_at
+                ).count()
+                
+                est = ml_engine.predict(now.hour, now.weekday(), tokens_ahead)
+                if est is None:
+                    est = max(1, tokens_ahead * 8)
+                
+                # If wait time is around 60 minutes, send reminder
+                if est > 0 and est <= 60:
+                    token.reminder_sent = 1
+                    db.commit()
+                    send_sms(token.phone, f"Pālo Reminder: Your appointment is in approx. 1 hour. Please prepare to arrive on time.")
+                    
+        except Exception as e:
+            print(f"Reminder loop error: {e}")
+        finally:
+            db.close()
+        await asyncio.sleep(60)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +85,9 @@ async def lifespan(app: FastAPI):
             )
             db.add(default_queue)
             db.commit()
+        
+        asyncio.create_task(run_reminder_loop())
+
     finally:
         db.close()
         
@@ -77,6 +121,34 @@ async def health(db: Session = fastapi.Depends(get_db)):
     
     return HealthResponse(status="ok", database=db_status)
 
+class IncomingSMS(BaseModel):
+    phone: str
+    message: str
+
+@app.post("/webhooks/sms")
+async def handle_incoming_sms(payload: IncomingSMS, db: Session = fastapi.Depends(get_db)):
+    """Webhook for SMS provider (e.g. Twilio) to forward incoming replies"""
+    msg = payload.message.strip().upper()
+    
+    if msg == "YES":
+        # Find token that requires confirmation
+        token = db.query(Token).filter(
+            Token.phone == payload.phone,
+            Token.state == TokenState.WAITING,
+            Token.requires_confirmation == 1,
+            Token.is_confirmed == 0
+        ).first()
+        
+        if token:
+            token.is_confirmed = 1
+            db.commit()
+            send_sms(payload.phone, "Thank you! Your Pālo appointment is now fully confirmed.")
+            return {"status": "confirmed"}
+        else:
+            return {"status": "no pending confirmations"}
+            
+    return {"status": "ignored"}
+
 
 # ============================================================================
 # Organizations
@@ -108,6 +180,38 @@ async def get_organization(org_id: str, db: Session = fastapi.Depends(get_db)):
 async def list_organizations(db: Session = fastapi.Depends(get_db)):
     """List all organizations"""
     return db.query(Organization).all()
+
+
+@app.get("/organizations/{org_id}/impact", response_model=ImpactStatsResponse)
+async def get_organization_impact(org_id: str, db: Session = fastapi.Depends(get_db)):
+    """Get global impact stats for the entire platform"""
+    # Get all completed tokens across the entire system
+    completed_tokens = db.query(Token).filter(
+        Token.state == TokenState.COMPLETED,
+        Token.wait_time_minutes != None
+    ).all()
+    
+    if not completed_tokens:
+        return ImpactStatsResponse(users_served=0, hours_saved=0, wait_reduction_pct=0)
+        
+    users_served = len(completed_tokens)
+    total_wait_minutes = sum(t.wait_time_minutes for t in completed_tokens)
+    hours_saved = int(total_wait_minutes / 60)
+    
+    # Calculate Wait Reduction % compared to a 45-minute baseline physical wait
+    avg_wait = total_wait_minutes / users_served
+    baseline_minutes = 45.0
+    
+    if avg_wait < baseline_minutes:
+        wait_reduction_pct = int(((baseline_minutes - avg_wait) / baseline_minutes) * 100)
+    else:
+        wait_reduction_pct = 0
+        
+    return ImpactStatsResponse(
+        users_served=users_served,
+        hours_saved=hours_saved,
+        wait_reduction_pct=wait_reduction_pct
+    )
 
 
 # ============================================================================
@@ -192,6 +296,7 @@ async def update_queue(
 async def create_token(
     queue_id: str,
     token_data: TokenCreate,
+    background_tasks: fastapi.BackgroundTasks,
     db: Session = fastapi.Depends(get_db)
 ):
     """Join a queue and get a token"""
@@ -252,6 +357,29 @@ async def create_token(
         Token.service_date == service_date
     ).count()
     
+    # Calculate Attendance Risk Score
+    risk_status = "reliable"
+    requires_confirmation = 0
+    
+    if token_data.phone:
+        history_tokens = db.query(Token).filter(
+            Token.phone == token_data.phone,
+            Token.state.in_([TokenState.COMPLETED, TokenState.NO_SHOW, TokenState.CANCELLED])
+        ).all()
+        
+        total_history = len(history_tokens)
+        if total_history >= 3:
+            attended = sum(1 for t in history_tokens if t.state == TokenState.COMPLETED)
+            score = attended / total_history
+            
+            if score > 0.8:
+                risk_status = "reliable"
+            elif score >= 0.5:
+                risk_status = "moderate_risk"
+            else:
+                risk_status = "high_risk"
+                requires_confirmation = 1
+    
     # Create token
     db_token = Token(
         id=str(uuid.uuid4()),
@@ -262,9 +390,19 @@ async def create_token(
         state=TokenState.WAITING,
         service_date=service_date,
         secret_token=str(uuid.uuid4()),
-        verification_pin=str(random.randint(1000, 9999))
+        verification_pin=str(random.randint(1000, 9999)),
+        risk_status=risk_status,
+        requires_confirmation=requires_confirmation,
+        is_confirmed=0
     )
     
+    # Send Booking / No-Show Confirmation SMS in the background
+    if token_data.phone:
+        msg = f"Your Pālo ticket is confirmed! Ticket #{db_token.number}."
+        if requires_confirmation == 1:
+            msg += "\nACTION REQUIRED: Based on your attendance history, you must reply 'YES' to this message to keep your slot."
+        background_tasks.add_task(send_sms, token_data.phone, msg)
+        
     # Predict wait time
     now = datetime.utcnow()
     hour = now.hour
@@ -394,6 +532,19 @@ async def update_token_state(
             )
             db.add(training_record)
     
+    db.commit()
+    db.refresh(token)
+    return token
+
+
+@app.post("/tokens/{token_id}/confirm", response_model=TokenResponse)
+async def confirm_token(token_id: str, db: Session = fastapi.Depends(get_db)):
+    """Confirm attendance for a high-risk token"""
+    token = db.query(Token).filter(Token.id == token_id).first()
+    if not token:
+        raise fastapi.HTTPException(status_code=404, detail="Token not found")
+    
+    token.is_confirmed = 1
     db.commit()
     db.refresh(token)
     return token
@@ -756,3 +907,4 @@ async def change_admin_password(req: ChangePasswordRequest):
     creds["pin"] = req.new_pin
     _save_credentials(creds)
     return {"status": "success", "message": "PIN updated successfully."}
+

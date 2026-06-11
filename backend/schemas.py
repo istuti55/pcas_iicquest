@@ -62,6 +62,12 @@ class QueueDetailResponse(QueueResponse):
     avg_wait_time: Optional[float] = None
 
 
+class ImpactStatsResponse(BaseModel):
+    users_served: int
+    hours_saved: int
+    wait_reduction_pct: int
+
+
 # Token Schemas
 class TokenCreate(BaseModel):
     phone: Optional[str] = None
@@ -83,6 +89,10 @@ class TokenResponse(BaseModel):
     completed_at: Optional[datetime]
     wait_time_minutes: Optional[float]
     estimated_wait_minutes: Optional[float]
+    risk_status: Optional[str]
+    requires_confirmation: Optional[int]
+    is_confirmed: Optional[int]
+    reminder_sent: Optional[int]
     
     class Config:
         from_attributes = True

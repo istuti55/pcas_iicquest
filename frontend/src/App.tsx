@@ -32,28 +32,33 @@ export default function App() {
         let savedOrgId = localStorage.getItem('palo_org_id');
         let savedQueueId = localStorage.getItem('palo_queue_id');
 
-        if (!savedOrgId || !savedQueueId) {
-          try {
-            const orgsRes = await organizationAPI.listAll();
-            if (!orgsRes.data || orgsRes.data.length === 0) {
-              throw new Error("No organizations found");
-            }
+        try {
+          const orgsRes = await organizationAPI.listAll();
+          if (!orgsRes.data || orgsRes.data.length === 0) {
+            throw new Error("No organizations found");
+          }
+          
+          const orgExists = savedOrgId && orgsRes.data.some((o: any) => o.id === savedOrgId);
+          if (!orgExists) {
             savedOrgId = orgsRes.data[0].id;
             localStorage.setItem('palo_org_id', savedOrgId!);
-
-            if (!savedQueueId) {
-              const qRes = await queueAPI.list(savedOrgId!);
-              const queues = qRes.data;
-              if (queues && queues.length > 0) {
-                savedQueueId = queues[0].id;
-                localStorage.setItem('palo_queue_id', savedQueueId!);
-              } else {
-                savedQueueId = null;
-              }
-            }
-          } catch {
-            savedQueueId = null;
+            savedQueueId = null; 
+            localStorage.removeItem('palo_queue_id');
+            localStorage.removeItem('palo_active_token_id');
           }
+
+          if (!savedQueueId) {
+            const qRes = await queueAPI.list(savedOrgId!);
+            const queues = qRes.data;
+            if (queues && queues.length > 0) {
+              savedQueueId = queues[0].id;
+              localStorage.setItem('palo_queue_id', savedQueueId!);
+            } else {
+              savedQueueId = null;
+            }
+          }
+        } catch {
+          savedQueueId = null;
         }
 
         if (savedOrgId) setOrgId(savedOrgId);

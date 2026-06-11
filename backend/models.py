@@ -67,6 +67,10 @@ class Token(Base):
     completed_at = Column(DateTime, nullable=True)
     wait_time_minutes = Column(Float, nullable=True)  # Actual wait time after completion
     estimated_wait_minutes = Column(Float, nullable=True)  # ML prediction
+    risk_status = Column(String, default="reliable")  # reliable, moderate_risk, high_risk
+    requires_confirmation = Column(Integer, default=0) # 0=False, 1=True
+    is_confirmed = Column(Integer, default=0) # 0=False, 1=True
+    reminder_sent = Column(Integer, default=0) # 0=False, 1=True
     
     queue = relationship("Queue", back_populates="tokens")
     
