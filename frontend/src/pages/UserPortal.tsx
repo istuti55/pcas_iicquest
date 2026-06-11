@@ -14,9 +14,9 @@ interface UserPortalProps {
   onBack: () => void;
 }
 
-// Helper: get today's date in YYYY-MM-DD (local)
+// Helper: get today's date in YYYY-MM-DD in Nepal Time (NPT = UTC+5:45)
 const todayStr = () => {
-  const d = new Date();
+  const d = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Kathmandu' }));
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 };
 
