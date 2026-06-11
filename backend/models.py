@@ -56,6 +56,7 @@ class Token(Base):
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     queue_id = Column(String, ForeignKey("queues.id"), nullable=False, index=True)
     number = Column(Integer, nullable=False)  # E.g., 101, 102
+    name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
     email = Column(String, nullable=True)
     state = Column(Enum(TokenState), default=TokenState.WAITING, nullable=False)
@@ -67,6 +68,7 @@ class Token(Base):
     completed_at = Column(DateTime, nullable=True)
     wait_time_minutes = Column(Float, nullable=True)  # Actual wait time after completion
     estimated_wait_minutes = Column(Float, nullable=True)  # ML prediction
+    estimated_reporting_time = Column(String, nullable=True)  # e.g., "10:30 AM" – when user should arrive
     risk_status = Column(String, default="reliable")  # reliable, moderate_risk, high_risk
     requires_confirmation = Column(Integer, default=0) # 0=False, 1=True
     is_confirmed = Column(Integer, default=0) # 0=False, 1=True

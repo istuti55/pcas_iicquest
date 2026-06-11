@@ -25,9 +25,13 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   const [calling, setCalling] = useState(false);
   const [dailyLimit, setDailyLimit] = useState<number>(0);
   const [localDailyLimit, setLocalDailyLimit] = useState<string>('');
-  const [isUpdatingLimit, setIsUpdatingLimit] = useState(false);
-  const [serviceDate, setServiceDate] = useState<'today' | 'tomorrow'>('today');
-  const [activeTab, setActiveTab] = useState<'overview' | 'queue' | 'display' | 'configuration' | 'security'>('overview');
+  const todayStr = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const [serviceDate, setServiceDate] = useState<string>(todayStr());
+  const [activeTab, setActiveTab] = useState<'overview' | 'display' | 'settings'>('overview');
+  const [isActive, setIsActive] = useState<boolean>(true);
 
   // Configuration state
   const [configName, setConfigName] = useState('');
@@ -73,6 +77,9 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       if (document.activeElement?.id !== 'dailyLimitInput') {
         setLocalDailyLimit((qRes.data.daily_limit || 0).toString());
       }
+      if (document.activeElement?.id !== 'configActiveInput') {
+        setIsActive(qRes.data.active === 1);
+      }
       setStats(sRes.data);
       setOpData(opRes.data);
       setAllQueues(listRes.data);
@@ -106,26 +113,22 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     try { await tokenAPI.updateState(id, 'no_show'); await fetchAll(); } catch {}
   };
 
-  const updateDailyLimit = async () => {
-    setIsUpdatingLimit(true);
-    try {
-      const newLimit = parseInt(localDailyLimit) || 0;
-      await queueAPI.update(queueId, { daily_limit: newLimit });
-      setDailyLimit(newLimit);
-      await fetchAll();
-    } catch {}
-    setIsUpdatingLimit(false);
-  };
-
   const handleUpdateConfiguration = async (e: React.FormEvent) => {
     e.preventDefault();
     setConfigLoading(true); setConfigMsg(null);
     try {
-      await queueAPI.update(queueId, { name: configName, description: configDesc });
-      setConfigMsg({ type: 'success', text: 'Queue configuration updated successfully.' });
+      const newLimit = parseInt(localDailyLimit) || 0;
+      await queueAPI.update(queueId, { 
+        name: configName, 
+        description: configDesc,
+        daily_limit: newLimit,
+        active: isActive ? 1 : 0
+      });
+      setDailyLimit(newLimit);
+      setConfigMsg({ type: 'success', text: 'Queue settings updated successfully.' });
       await fetchAll();
     } catch (err: any) {
-      setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to update configuration.' });
+      setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to update settings.' });
     }
     setConfigLoading(false);
   };
@@ -183,90 +186,98 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   const navBtn = (tab: typeof activeTab, label: string, Icon: any, extra?: () => void) => (
     <button
       onClick={() => { setActiveTab(tab); extra?.(); }}
-      className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
-        activeTab === tab ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'
+      className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl font-semibold text-sm transition-all ${
+        activeTab === tab
+          ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20'
+          : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.05] border border-transparent'
       }`}
     >
-      <Icon size={18} /> {label}
+      <Icon size={17} /> {label}
     </button>
   );
 
   return (
-    <div className="min-h-screen text-slate-100 flex selection:bg-blue-500/30">
+    <div className="min-h-screen text-slate-100 flex flex-col lg:flex-row selection:bg-blue-500/30 relative pb-16 lg:pb-0">
       {/* Sidebar */}
-      <aside className="hidden lg:flex w-80 flex-col border-r border-white/5 bg-black/20 backdrop-blur-3xl p-10 sticky top-0 h-screen">
-        <div className="flex items-center gap-4 mb-8">
-          <div className="w-12 h-12 glass rounded-2xl flex items-center justify-center relative group">
-            <div className="absolute inset-0 bg-blue-500/20 blur-xl group-hover:bg-blue-500/40 transition-all rounded-full" />
-            <ShieldCheck size={28} className="text-blue-400 relative z-10" />
+      <aside className="hidden lg:flex w-72 flex-col border-r border-white/[0.06] bg-[#0d1525]/80 backdrop-blur-2xl p-7 sticky top-0 h-screen">
+        {/* Brand */}
+        <div className="flex items-center gap-3 mb-8 pb-7 border-b border-white/[0.06]">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+            <ShieldCheck size={18} className="text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tighter">Pālo Console</h1>
-            <p className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-500">Command Center</p>
+            <p className="text-base font-bold text-white tracking-tight">Pālo Console</p>
+            <p className="text-xs text-slate-500 font-medium">Staff Dashboard</p>
           </div>
         </div>
 
         {/* Queue Switcher */}
         {allQueues.length > 1 && (
-          <div className="mb-10 animate-in" style={{ animationDelay: '0.1s' }}>
-            <label className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-500 mb-2 block">Active Queue</label>
-            <select
-              value={queueId}
-              onChange={(e) => onQueueChange(e.target.value)}
-              className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-sm font-bold text-white focus:border-blue-500/50 focus:ring-4 focus:ring-blue-500/10 transition-all appearance-none cursor-pointer"
-              style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1rem center' }}
-            >
-              {allQueues.map(q => (
-                <option key={q.id} value={q.id} className="bg-slate-900 text-white">{q.name}</option>
-              ))}
-            </select>
+          <div className="mb-6">
+            <label className="text-xs font-semibold text-slate-500 mb-2 block">Active Queue</label>
+            <div className="relative">
+              <select
+                value={queueId}
+                onChange={(e) => onQueueChange(e.target.value)}
+                className="w-full bg-white/[0.04] border border-white/[0.08] rounded-xl px-4 py-2.5 text-sm font-semibold text-white focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/10 transition-all appearance-none cursor-pointer outline-none"
+              >
+                {allQueues.map(q => (
+                  <option key={q.id} value={q.id} className="bg-slate-900 text-white">{q.name}</option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+              </div>
+            </div>
           </div>
         )}
 
-        <nav className="flex-1 space-y-3">
-          {navBtn('overview', "Today's Overview", Activity, () => setServiceDate('today'))}
-          <button
-            onClick={() => { setActiveTab('overview'); setServiceDate('tomorrow'); }}
-            className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest transition-all ${
-              activeTab === 'overview' && serviceDate === 'tomorrow' ? 'bg-blue-600/10 text-blue-400 border border-blue-500/20' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5 border border-transparent'
-            }`}
-          >
-            <Clock size={18} /> Tomorrow's Overview
-          </button>
-          <div className="h-px w-full bg-white/5 my-6" />
-          {navBtn('queue', 'Queue Management', Users)}
-          {navBtn('display', 'Display Setup', Monitor)}
-          {navBtn('configuration', 'Configuration', Settings)}
-          {navBtn('security', 'Security', ShieldCheck)}
+        <nav className="flex-1 space-y-1.5">
+          {navBtn('overview', 'Live Workspace', Activity)}
+          <div className="h-px bg-white/[0.05] my-3" />
+          {navBtn('display', 'Lobby Displays', Monitor)}
+          {navBtn('settings', 'System Settings', Settings)}
         </nav>
 
         <button
           onClick={onLogout}
-          className="mt-auto flex items-center gap-4 px-6 py-5 text-slate-500 hover:text-red-400 hover:bg-red-500/5 rounded-2xl font-black text-xs uppercase tracking-widest transition-all"
+          className="mt-auto flex items-center gap-3 px-4 py-3 text-slate-500 hover:text-red-400 hover:bg-red-500/5 rounded-xl font-semibold text-sm transition-all border border-transparent hover:border-red-500/10"
         >
-          <LogOut size={18} /> Sign Out
+          <LogOut size={17} /> Sign Out
         </button>
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-h-screen">
-        <header className="px-10 py-10 md:px-16 flex items-center justify-between sticky top-0 z-20 bg-[#020617]/40 backdrop-blur-2xl">
-          <div className="animate-in">
-            <h2 className="text-4xl font-black text-white tracking-tighter">
-              {activeTab === 'overview' ? (serviceDate === 'tomorrow' ? "Tomorrow's Overview" : "Today's Overview")
-                : activeTab === 'queue' ? 'Queue Management'
-                : activeTab === 'display' ? 'Display Setup'
-                : activeTab === 'configuration' ? 'Configuration'
-                : 'Security'}
+        <header className="px-8 py-6 flex items-center justify-between sticky top-0 z-20 bg-[#0a0f1e]/60 backdrop-blur-xl border-b border-white/[0.06]">
+          <div>
+            <h2 className="text-2xl font-bold text-white tracking-tight">
+              {activeTab === 'overview' ? 'Live Workspace'
+                : activeTab === 'display' ? 'Lobby Displays'
+                : 'System Settings'}
             </h2>
-            <div className="flex items-center gap-3 mt-1">
-              <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-              <p className="text-slate-500 text-[11px] font-black uppercase tracking-[0.3em]">{queueName}</p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <span className="live-dot" style={{ width: 6, height: 6 }} />
+              <p className="text-slate-500 text-xs font-medium">{queueName}</p>
             </div>
           </div>
-          <div className="hidden md:flex items-center gap-3 px-5 py-2.5 glass border-white/10 rounded-full animate-in" style={{ animationDelay: '0.1s' }}>
-            <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
-            <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">Live</span>
+          <div className="flex items-center gap-3">
+            {activeTab === 'overview' && (
+              <div className="flex items-center gap-2">
+                <Clock size={14} className="text-slate-500" />
+                <input
+                  type="date"
+                  value={serviceDate}
+                  onChange={e => setServiceDate(e.target.value)}
+                  className="bg-white/[0.05] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500/50 outline-none"
+                  style={{ colorScheme: 'dark' }}
+                />
+              </div>
+            )}
+            <div className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-white/[0.04] border border-white/[0.07] rounded-full">
+              <span className="live-dot" />
+              <span className="text-xs font-semibold text-slate-300">Live</span>
+            </div>
           </div>
         </header>
 
@@ -278,14 +289,25 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-6 animate-in" style={{ animationDelay: '0.2s' }}>
                 {stats && (
                   <>
-                    <StatsCard label="Waiting" value={stats.total_waiting} colour="border-blue-500/10" icon={<Users size={18} className="text-blue-400 opacity-50" />} />
-                    <StatsCard label="Active Service" value={stats.total_serving} colour="border-purple-500/10" icon={<Monitor size={18} className="text-purple-400 opacity-50" />} />
-                    <StatsCard label="Total Quota" value={dailyLimit > 0 ? `${stats.total_issued}/${dailyLimit}` : '∞'} colour="border-white/5" icon={<ShieldCheck size={18} className="text-slate-400 opacity-50" />} />
                     <StatsCard 
-                      label={mlPrediction?.is_ml_trained ? "AI Predict" : "Live Predict"} 
-                      value={mlPrediction ? `${Math.round(mlPrediction.estimated_wait_minutes)}m` : '--'} 
-                      colour="border-amber-500/10" 
-                      icon={mlPrediction?.is_ml_trained ? <Brain size={18} className="text-amber-400 opacity-50" /> : <Clock size={18} className="text-amber-400 opacity-50" />} 
+                      label="Next Turn" 
+                      value={opData?.next_token ? `#${opData.next_token.number}` : '—'} 
+                      icon={<ChevronRight size={18} className="text-blue-400 opacity-50" />} 
+                    />
+                    <StatsCard 
+                      label="Served Today" 
+                      value={stats.total_completed_today} 
+                      icon={<CheckCircle2 size={18} className="text-emerald-400 opacity-50" />} 
+                    />
+                    <StatsCard 
+                      label="Skipped Today" 
+                      value={stats.total_skipped} 
+                      icon={<Users size={18} className="text-red-400 opacity-50" />} 
+                    />
+                    <StatsCard 
+                      label="Waiting In Queue" 
+                      value={stats.total_waiting} 
+                      icon={<Users size={18} className="text-purple-400 opacity-50" />} 
                     />
                   </>
                 )}
@@ -297,31 +319,32 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                     <div className="absolute top-0 right-0 w-80 h-80 bg-blue-500/10 rounded-full blur-[100px] -mr-40 -mt-40 pointer-events-none group-hover:bg-blue-500/20 transition-all duration-700" />
                     <h3 className="text-slate-600 text-[10px] font-black uppercase tracking-[0.4em] mb-12 relative z-10">Console Actions</h3>
                     {opData?.next_token ? (
-                      <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-12">
-                        <div>
-                          <p className="text-slate-500 text-[10px] font-black uppercase tracking-[0.3em] mb-6">Upcoming Priority</p>
-                          <div className="scale-110 origin-left">
+                      <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+                        <div className="flex-1">
+                          <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-4">Next in Queue</p>
+                          <div className="flex items-center gap-5 flex-wrap">
                             <TokenBadge number={opData.next_token.number} status="called" size="lg" />
-                          </div>
-                          {opData.next_token.phone && (
-                            <div className="flex gap-3 mt-10">
-                              <div className="flex items-center gap-3 bg-white/5 px-4 py-2 rounded-xl border border-white/5">
-                                <Phone size={12} className="text-slate-500" />
-                                <span className="text-slate-300 font-bold text-xs tracking-wide">{opData.next_token.phone}</span>
-                              </div>
-                              <div className="flex items-center gap-3 bg-blue-500/20 px-4 py-2 rounded-xl border border-blue-500/30">
-                                <span className="text-[10px] font-black uppercase tracking-widest text-blue-400/60">PIN:</span>
-                                <span className="text-blue-100 font-black text-sm tracking-[0.2em]">{opData.next_token.verification_pin}</span>
+                            <div>
+                              {opData.next_token.name && <p className="text-white font-bold text-lg">{opData.next_token.name}</p>}
+                              {opData.next_token.phone && (
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Phone size={12} className="text-slate-500" />
+                                  <span className="text-slate-400 text-sm">{opData.next_token.phone}</span>
+                                </div>
+                              )}
+                              <div className="flex items-center gap-2 mt-2 bg-blue-500/10 border border-blue-500/20 px-3 py-1.5 rounded-lg w-fit">
+                                <span className="text-xs font-semibold text-blue-400/70 uppercase tracking-wider">PIN:</span>
+                                <span className="text-blue-200 font-bold text-sm tracking-[0.2em]">{opData.next_token.verification_pin}</span>
                               </div>
                             </div>
-                          )}
+                          </div>
                         </div>
-                        <div className="flex flex-col gap-4 w-full md:w-auto">
-                          <button onClick={handleCallNext} disabled={calling} className="h-20 btn-premium px-16 min-w-[200px]">
-                            {calling ? <span className="w-6 h-6 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <span className="flex items-center gap-3 text-sm">Call Next <ArrowRight size={20} /></span>}
+                        <div className="flex flex-col gap-3 w-full md:w-auto shrink-0">
+                          <button onClick={handleCallNext} disabled={calling} className="h-14 btn-primary px-10 min-w-[180px]">
+                            {calling ? <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin" /> : <span className="flex items-center gap-2">Call Next <ArrowRight size={18} /></span>}
                           </button>
-                          <button onClick={() => handleSkip(opData.next_token.id)} className="h-14 font-black text-[10px] uppercase tracking-[0.3em] text-slate-500 hover:text-red-400 transition-all">
-                            Mark as No Show
+                          <button onClick={() => handleSkip(opData.next_token.id)} className="h-10 font-medium text-sm text-slate-500 hover:text-red-400 transition-all border border-transparent hover:border-red-500/20 rounded-xl">
+                            Mark as No-Show
                           </button>
                         </div>
                       </div>
@@ -337,16 +360,20 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                     {opData?.serving_tokens?.length > 0 ? (
                       <div className="grid md:grid-cols-2 gap-6">
                         {opData.serving_tokens.map((t: any) => (
-                          <div key={t.id} className="glass-card !p-8 flex flex-col gap-8">
+                          <div key={t.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 flex flex-col gap-5">
                             <div className="flex items-center justify-between">
-                              <TokenBadge number={t.number} status="serving" size="md" />
+                              <div>
+                                <TokenBadge number={t.number} status="serving" size="md" />
+                                {t.name && <p className="text-slate-300 font-semibold text-sm mt-2">{t.name}</p>}
+                                {t.phone && <p className="text-slate-500 text-xs mt-0.5">{t.phone}</p>}
+                              </div>
                               <div className="text-right">
-                                <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-1">Pass Code</p>
-                                <p className="text-blue-200 font-black text-sm tracking-[0.2em]">{t.verification_pin}</p>
+                                <p className="text-xs font-semibold text-slate-500 mb-1">Verification</p>
+                                <p className="text-blue-300 font-bold text-lg tracking-[0.2em]">{t.verification_pin}</p>
                               </div>
                             </div>
-                            <button onClick={() => handleComplete(t.id)} className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-black text-[10px] uppercase tracking-[0.3em] rounded-2xl hover:bg-emerald-500 hover:text-white transition-all">
-                              Complete Service
+                            <button onClick={() => handleComplete(t.id)} className="w-full h-12 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-semibold text-sm rounded-xl hover:bg-emerald-500 hover:text-white transition-all">
+                              ✓ Complete Service
                             </button>
                           </div>
                         ))}
@@ -368,17 +395,19 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                     {opData?.waiting_tokens?.length > 0 ? (
                       <div className="space-y-4 overflow-y-auto max-h-[700px] pr-4 custom-scroll">
                         {opData.waiting_tokens.map((t: any, i: number) => (
-                          <div key={t.id} className="group flex items-center gap-5 glass rounded-2xl p-5 border-white/[0.03] hover:border-white/10 transition-all duration-500">
-                            <span className="text-slate-800 text-[10px] font-black w-4">{i + 1}</span>
+                          <div key={t.id} className="group flex items-center gap-4 bg-white/[0.03] border border-white/[0.06] rounded-2xl p-4 hover:border-white/10 transition-all duration-300">
+                            <span className="text-slate-600 text-xs font-bold w-5 shrink-0">{i + 1}</span>
                             <TokenBadge number={t.number} status="waiting" size="sm" />
-                            <div className="flex-1" />
-                            {t.estimated_wait_minutes && (
-                              <div className="text-right">
-                                <p className="text-amber-500/80 font-black text-xs font-mono">{Math.round(t.estimated_wait_minutes)}m</p>
-                                <p className="text-[8px] uppercase tracking-tighter text-slate-700 font-black">Est. Wait</p>
+                            <div className="flex-1 min-w-0">
+                              {t.name && <p className="text-slate-200 font-semibold text-sm truncate">{t.name}</p>}
+                              {t.phone && <p className="text-slate-500 text-xs truncate">{t.phone}</p>}
+                            </div>
+                            {t.estimated_reporting_time && (
+                              <div className="text-right shrink-0">
+                                <p className="text-blue-400 font-bold text-sm">{t.estimated_reporting_time}</p>
+                                <p className="text-xs text-slate-600">report by</p>
                               </div>
                             )}
-                            <ChevronRight size={14} className="text-slate-800 group-hover:text-blue-500 group-hover:translate-x-1 transition-all" />
                           </div>
                         ))}
                       </div>
@@ -392,37 +421,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
               </div>
             </>
           )}
-
-          {/* ── QUEUE MANAGEMENT TAB ── */}
-          {activeTab === 'queue' && (
-            <div className="animate-in glass-card !p-12">
-              <h3 className="text-2xl font-black text-white mb-6">Queue Management</h3>
-              <p className="text-slate-400 mb-10">Manage quota settings for <span className="text-white font-bold">{queueName}</span>.</p>
-              <div className="max-w-md">
-                <div className="glass p-8 rounded-2xl border-white/5">
-                  <h4 className="text-sm font-black text-white mb-1">Daily Token Limit</h4>
-                  <p className="text-xs text-slate-500 mb-6">Set the maximum tokens issued per day. Set to 0 for unlimited.</p>
-                  <div className="flex gap-4">
-                    <input
-                      id="dailyLimitInput"
-                      type="text"
-                      value={localDailyLimit}
-                      onChange={(e) => setLocalDailyLimit(e.target.value.replace(/[^0-9]/g, ''))}
-                      className="input-premium h-14 text-lg flex-1"
-                      placeholder="0 = Unlimited"
-                    />
-                    <button onClick={updateDailyLimit} disabled={isUpdatingLimit} className="btn-premium px-8">
-                      {isUpdatingLimit ? 'Saving...' : 'Save'}
-                    </button>
-                  </div>
-                  {dailyLimit > 0 && (
-                    <p className="text-[10px] text-slate-600 mt-4">Current limit: <span className="text-blue-400 font-bold">{dailyLimit} tokens/day</span></p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* ── DISPLAY SETUP TAB ── */}
           {activeTab === 'display' && (
             <div className="animate-in glass-card !p-12">
@@ -468,194 +466,263 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
             </div>
           )}
 
-          {/* ── CONFIGURATION TAB ── */}
-          {activeTab === 'configuration' && (
-            <div className="animate-in max-w-2xl">
-              <div className="glass-card !p-12">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
-                    <Settings size={22} className="text-blue-400" />
+          {/* ── SYSTEM SETTINGS TAB ── */}
+          {activeTab === 'settings' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 animate-in">
+              
+              {/* Left Column: Queue Params & New Queue */}
+              <div className="space-y-10">
+                {/* Queue Parameters Card */}
+                <div className="glass-card !p-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
+                      <Settings size={22} className="text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">Queue Parameters</h3>
+                      <p className="text-xs text-slate-500 mt-1">Configure service settings and daily token limit.</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-xl font-black text-white">Queue Configuration</h3>
-                    <p className="text-xs text-slate-500 mt-1">Update the public-facing details of your service queue.</p>
-                  </div>
+
+                  {configMsg && (
+                    <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
+                      configMsg.type === 'success'
+                        ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}>
+                      <CheckCircle2 size={18} />
+                      <span>{configMsg.text}</span>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleUpdateConfiguration} className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Queue Name</label>
+                      <input 
+                        id="configNameInput"
+                        type="text" 
+                        value={configName}
+                        onChange={e => setConfigName(e.target.value)}
+                        className="input-premium h-14 text-lg" 
+                        placeholder="e.g., Main Reception" 
+                        required 
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description</label>
+                      <textarea 
+                        id="configDescInput"
+                        value={configDesc}
+                        onChange={e => setConfigDesc(e.target.value)}
+                        className="input-premium py-4 text-sm resize-none h-24" 
+                        placeholder="What is this queue used for?" 
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Daily Token Limit</label>
+                      <input 
+                        id="dailyLimitInput"
+                        type="text" 
+                        value={localDailyLimit}
+                        onChange={(e) => setLocalDailyLimit(e.target.value.replace(/[^0-9]/g, ''))}
+                        className="input-premium h-14 text-lg" 
+                        placeholder="0 = Unlimited" 
+                      />
+                      <p className="text-[10px] text-slate-500">Set the maximum tokens issued per day. Set to 0 for unlimited.</p>
+                    </div>
+
+                    <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] p-4 rounded-xl">
+                      <input
+                        id="configActiveInput"
+                        type="checkbox"
+                        checked={isActive}
+                        onChange={e => setIsActive(e.target.checked)}
+                        className="w-5 h-5 rounded border-white/[0.08] bg-slate-950 text-blue-500 focus:ring-blue-500/10 focus:ring-2 cursor-pointer"
+                      />
+                      <div>
+                        <label htmlFor="configActiveInput" className="text-sm font-bold text-white cursor-pointer select-none">Active Status</label>
+                        <p className="text-[10px] text-slate-500">Allow users to book tokens in this queue. Inactive queues are hidden.</p>
+                      </div>
+                    </div>
+
+                    <div className="pt-2">
+                      <button type="submit" disabled={configLoading} className="btn-primary w-full h-14">
+                        {configLoading ? 'Saving...' : 'Save Settings'}
+                      </button>
+                    </div>
+                  </form>
                 </div>
 
-                {configMsg && (
-                  <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
-                    configMsg.type === 'success'
-                      ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                      : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                  }`}>
-                    <CheckCircle2 size={18} />
-                    <span>{configMsg.text}</span>
+                {/* Create Additional Queue Card */}
+                <div className="glass-card !p-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
+                      <Users size={22} className="text-emerald-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">Create Additional Service</h3>
+                      <p className="text-xs text-slate-500 mt-1">Add a new service queue (e.g. Pharmacy, Billing) to this organization.</p>
+                    </div>
                   </div>
-                )}
 
-                <form onSubmit={handleUpdateConfiguration} className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Queue Name</label>
-                    <input 
-                      id="configNameInput"
-                      type="text" 
-                      value={configName}
-                      onChange={e => setConfigName(e.target.value)}
-                      className="input-premium h-14 text-lg" 
-                      placeholder="e.g., Main Reception" 
-                      required 
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description (Optional)</label>
-                    <textarea 
-                      id="configDescInput"
-                      value={configDesc}
-                      onChange={e => setConfigDesc(e.target.value)}
-                      className="input-premium py-4 text-sm resize-none h-32" 
-                      placeholder="What is this queue used for?" 
-                    />
-                  </div>
-                  
-                  <div className="pt-4">
-                    <button type="submit" disabled={configLoading} className="btn-premium w-full h-14">
-                      {configLoading ? 'Saving...' : 'Save Configuration'}
-                    </button>
-                  </div>
-                </form>
+                  {createQueueMsg && (
+                    <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
+                      createQueueMsg.type === 'success'
+                        ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}>
+                      <CheckCircle2 size={18} />
+                      <span>{createQueueMsg.text}</span>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleCreateQueue} className="space-y-6">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New Queue Name</label>
+                      <input 
+                        type="text" 
+                        value={newQueueName}
+                        onChange={e => setNewQueueName(e.target.value)}
+                        className="input-premium h-14 text-lg" 
+                        placeholder="e.g., Fast Track" 
+                        required 
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description</label>
+                      <textarea 
+                        value={newQueueDesc}
+                        onChange={e => setNewQueueDesc(e.target.value)}
+                        className="input-premium py-4 text-sm resize-none h-20" 
+                        placeholder="Short description of this new queue..." 
+                      />
+                    </div>
+                    
+                    <div className="pt-2">
+                      <button type="submit" disabled={createQueueLoading || !newQueueName} className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white font-black uppercase tracking-[0.2em] rounded-2xl transition-all">
+                        {createQueueLoading ? 'Creating...' : 'Create Queue'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
               </div>
 
-              {/* Create New Queue */}
-              <div className="glass-card !p-12 mt-10">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-emerald-500/10 rounded-2xl flex items-center justify-center">
-                    <Users size={22} className="text-emerald-400" />
+              {/* Right Column: Security PIN & ML Seeding */}
+              <div className="space-y-10">
+                {/* Change PIN Card */}
+                <div className="glass-card !p-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
+                      <KeyRound size={22} className="text-blue-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">Change Admin PIN</h3>
+                      <p className="text-xs text-slate-500 mt-1">Update the 4-digit PIN used to access this admin console.</p>
+                    </div>
                   </div>
-                  <div>
-                    <h3 className="text-xl font-black text-white">Create Additional Queue</h3>
-                    <p className="text-xs text-slate-500 mt-1">Add a new service queue (e.g. Pharmacy, Billing) to this organization.</p>
-                  </div>
-                </div>
 
-                {createQueueMsg && (
-                  <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
-                    createQueueMsg.type === 'success'
-                      ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                      : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                  }`}>
-                    <CheckCircle2 size={18} />
-                    <span>{createQueueMsg.text}</span>
-                  </div>
-                )}
+                  {pwMsg && (
+                    <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
+                      pwMsg.type === 'success'
+                        ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+                        : 'bg-red-500/10 border border-red-500/20 text-red-400'
+                    }`}>
+                      {pwMsg.type === 'success' ? <CheckCircle2 size={18} /> : <KeyRound size={18} />}
+                      <span>{pwMsg.text}</span>
+                    </div>
+                  )}
 
-                <form onSubmit={handleCreateQueue} className="space-y-6">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New Queue Name</label>
-                    <input 
-                      type="text" 
-                      value={newQueueName}
-                      onChange={e => setNewQueueName(e.target.value)}
-                      className="input-premium h-14 text-lg" 
-                      placeholder="e.g., Fast Track" 
-                      required 
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Description (Optional)</label>
-                    <textarea 
-                      value={newQueueDesc}
-                      onChange={e => setNewQueueDesc(e.target.value)}
-                      className="input-premium py-4 text-sm resize-none h-24" 
-                      placeholder="Short purpose of this new queue..." 
-                    />
-                  </div>
-                  
-                  <div className="pt-4">
-                    <button type="submit" disabled={createQueueLoading || !newQueueName} className="w-full h-14 bg-emerald-500/10 border border-emerald-500/20 hover:bg-emerald-500 text-emerald-400 hover:text-white font-black uppercase tracking-[0.2em] rounded-2xl transition-all">
-                      {createQueueLoading ? 'Creating...' : 'Create Queue'}
+                  <form onSubmit={handleChangePassword} className="space-y-5">
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Current PIN</label>
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwCurrent}
+                        onChange={e => setPwCurrent(e.target.value.replace(/\D/g, ''))}
+                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Current 4-digit PIN" required />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New PIN</label>
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwNew}
+                        onChange={e => setPwNew(e.target.value.replace(/\D/g, ''))}
+                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="New 4-digit PIN" required />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Confirm New PIN</label>
+                      <input type="password" inputMode="numeric" maxLength={8} value={pwConfirm}
+                        onChange={e => setPwConfirm(e.target.value.replace(/\D/g, ''))}
+                        className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Repeat new PIN" required />
+                    </div>
+                    
+                    <button type="submit" disabled={pwLoading} className="btn-primary w-full h-14 mt-2">
+                      {pwLoading ? 'Updating...' : 'Update PIN'}
                     </button>
-                  </div>
-                </form>
-              </div>
-            </div>
-          )}
-
-          {/* ── SECURITY TAB ── */}
-          {activeTab === 'security' && (
-            <div className="animate-in space-y-10">
-              {/* Change PIN */}
-              <div className="glass-card !p-12">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-blue-500/10 rounded-2xl flex items-center justify-center">
-                    <KeyRound size={22} className="text-blue-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-white">Change Admin PIN</h3>
-                    <p className="text-xs text-slate-500 mt-1">Update the 4-digit PIN used to access the admin console.</p>
-                  </div>
+                  </form>
                 </div>
-                {pwMsg && (
-                  <div className={`flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold ${
-                    pwMsg.type === 'success'
-                      ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                      : 'bg-red-500/10 border border-red-500/20 text-red-400'
-                  }`}>
-                    {pwMsg.type === 'success' ? <CheckCircle2 size={18} /> : <KeyRound size={18} />}
-                    <span>{pwMsg.text}</span>
+
+                {/* ML Model Management Card */}
+                <div className="glass-card !p-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-violet-500/10 rounded-2xl flex items-center justify-center">
+                      <Brain size={22} className="text-violet-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">AI Wait-Time Model</h3>
+                      <p className="text-xs text-slate-500 mt-1">Bootstrap the ML model with synthetic data so it starts predicting immediately.</p>
+                    </div>
                   </div>
-                )}
-                <form onSubmit={handleChangePassword} className="max-w-sm space-y-5">
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Current PIN</label>
-                    <input type="password" inputMode="numeric" maxLength={8} value={pwCurrent}
-                      onChange={e => setPwCurrent(e.target.value.replace(/\D/g, ''))}
-                      className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Current 4-digit PIN" required />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">New PIN</label>
-                    <input type="password" inputMode="numeric" maxLength={8} value={pwNew}
-                      onChange={e => setPwNew(e.target.value.replace(/\D/g, ''))}
-                      className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="New 4-digit PIN" required />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Confirm New PIN</label>
-                    <input type="password" inputMode="numeric" maxLength={8} value={pwConfirm}
-                      onChange={e => setPwConfirm(e.target.value.replace(/\D/g, ''))}
-                      className="input-premium h-14 tracking-[0.3em] text-lg" placeholder="Repeat new PIN" required />
-                  </div>
-                  <button type="submit" disabled={pwLoading} className="btn-premium w-full h-14 mt-2">
-                    {pwLoading ? 'Updating...' : 'Update PIN'}
+
+                  {mlMsg && (
+                    <div className="flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold bg-violet-500/10 border border-violet-500/20 text-violet-300">
+                      <CheckCircle2 size={18} /><span>{mlMsg}</span>
+                    </div>
+                  )}
+
+                  <button onClick={handleSeedML} disabled={mlSeeding}
+                    className="h-14 px-10 bg-violet-600/10 border border-violet-500/20 text-violet-400 font-black text-[10px] uppercase tracking-[0.3em] rounded-2xl hover:bg-violet-600 hover:text-white transition-all w-full disabled:opacity-50">
+                    {mlSeeding ? 'Training...' : 'Seed & Train ML Model'}
                   </button>
-                </form>
+                  <p className="text-[10px] text-slate-600 mt-4 leading-relaxed">Generates 200 realistic wait records and trains immediately. Only needed once — real waiting data accumulates automatically as tokens are completed.</p>
+                </div>
               </div>
 
-              {/* ML Model Management */}
-              <div className="glass-card !p-12">
-                <div className="flex items-center gap-4 mb-8">
-                  <div className="w-12 h-12 bg-violet-500/10 rounded-2xl flex items-center justify-center">
-                    <Brain size={22} className="text-violet-400" />
-                  </div>
-                  <div>
-                    <h3 className="text-xl font-black text-white">AI Wait-Time Model</h3>
-                    <p className="text-xs text-slate-500 mt-1">Bootstrap the ML model with synthetic data so it starts predicting immediately.</p>
-                  </div>
-                </div>
-                {mlMsg && (
-                  <div className="flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold bg-violet-500/10 border border-violet-500/20 text-violet-300">
-                    <CheckCircle2 size={18} /><span>{mlMsg}</span>
-                  </div>
-                )}
-                <button onClick={handleSeedML} disabled={mlSeeding}
-                  className="h-14 px-10 bg-violet-600/10 border border-violet-500/20 text-violet-400 font-black text-[10px] uppercase tracking-[0.3em] rounded-2xl hover:bg-violet-600 hover:text-white transition-all disabled:opacity-50">
-                  {mlSeeding ? 'Training...' : 'Seed & Train ML Model'}
-                </button>
-                <p className="text-[10px] text-slate-600 mt-4">Generates 200 realistic records and trains immediately. Only needed once — real data accumulates automatically as tokens are completed.</p>
-              </div>
             </div>
           )}
 
         </div>
       </main>
+
+      {/* Mobile Bottom Nav */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0d1525]/95 backdrop-blur-xl border-t border-white/[0.06] flex items-center justify-around px-2 py-2">
+        {[
+          { tab: 'overview' as const, label: 'Workspace', Icon: Activity },
+          { tab: 'display' as const, label: 'Displays', Icon: Monitor },
+          { tab: 'settings' as const, label: 'Settings', Icon: Settings },
+        ].map(({ tab, label, Icon }) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={`flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-all text-xs font-semibold ${
+              activeTab === tab
+                ? 'text-blue-400 bg-blue-500/10'
+                : 'text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            <Icon size={20} />
+            {label}
+          </button>
+        ))}
+        <button
+          onClick={onLogout}
+          className="flex flex-col items-center gap-0.5 px-3 py-2 rounded-xl transition-all text-xs font-semibold text-slate-500 hover:text-red-400"
+        >
+          <LogOut size={20} />
+          Logout
+        </button>
+      </nav>
     </div>
   );
 }

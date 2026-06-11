@@ -299,79 +299,115 @@ async def create_token(
     background_tasks: fastapi.BackgroundTasks,
     db: Session = fastapi.Depends(get_db)
 ):
-    """Join a queue and get a token"""
+    """Join a queue and get a token (office hours: 10 AM – 5 PM, daily reset from #1)"""
     import random
     import uuid
+    from datetime import timedelta, date as date_type
+    from zoneinfo import ZoneInfo
+
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
-    
-    # Rule 1: Daily Limit (checked against service_date)
-    # Handle service_day from request
-    from datetime import timedelta
-    service_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    if token_data.service_day == "tomorrow":
-        service_date += timedelta(days=1)
-    
-    if queue.daily_limit > 0:
-        tokens_issued_for_date = db.query(Token).filter(
-            Token.queue_id == queue_id,
-            Token.service_date == service_date
-        ).count()
-        if tokens_issued_for_date >= queue.daily_limit:
-            raise fastapi.HTTPException(
-                status_code=403, 
-                detail=f"Daily token limit ({queue.daily_limit}) reached for this queue."
-            )
-            
-    # Rule 2: 12-Hour Cooldown for same user (phone)
-    if token_data.phone:
-        from datetime import timedelta
-        cooldown_threshold = datetime.utcnow() - timedelta(hours=12)
-        
-        recent_token = db.query(Token).filter(
-            Token.phone == token_data.phone,
-            Token.joined_at >= cooldown_threshold
-        ).first()
-        
-        if recent_token:
-            time_passed = datetime.utcnow() - recent_token.joined_at
-            hours_passed = time_passed.total_seconds() / 3600
-            hours_left = 12 - hours_passed
+
+    # ── Parse service_date ──────────────────────────────────────────────────
+    NPT = ZoneInfo("Asia/Kathmandu")
+    now_npt = datetime.now(NPT)
+    today_npt = now_npt.date()
+
+    if token_data.service_date:
+        try:
+            svc_date = date_type.fromisoformat(token_data.service_date)
+        except ValueError:
+            raise fastapi.HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+        if svc_date < today_npt:
+            raise fastapi.HTTPException(status_code=400, detail="Cannot book tokens for past dates.")
+    else:
+        svc_date = today_npt
+
+    # Store as UTC midnight for that Nepal date (NPT is UTC+5:45)
+    # We store the date as a plain midnight datetime in UTC for consistency
+    service_date = datetime(
+        svc_date.year, svc_date.month, svc_date.day,
+        0, 0, 0
+    )
+
+    # ── Office hours check (only enforce for TODAY bookings in real time) ──
+    if svc_date == today_npt:
+        office_open  = now_npt.replace(hour=10, minute=0,  second=0, microsecond=0)
+        office_close = now_npt.replace(hour=17, minute=0,  second=0, microsecond=0)
+        if now_npt < office_open:
             raise fastapi.HTTPException(
                 status_code=403,
-                detail=f"Cooldown active: You already have a token. Please wait another {hours_left:.1f} hours."
+                detail="Token issuance starts at 10:00 AM. Office not open yet."
+            )
+        if now_npt >= office_close:
+            raise fastapi.HTTPException(
+                status_code=403,
+                detail="Token issuance has closed for today. Office hours are 10:00 AM – 5:00 PM."
             )
 
-    # Get next token number for this service_date
+    # ── Daily limit check ───────────────────────────────────────────────────
+    tokens_issued_for_date = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.service_date == service_date
+    ).count()
+
+    if queue.daily_limit > 0 and tokens_issued_for_date >= queue.daily_limit:
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail=f"All {queue.daily_limit} tokens for {svc_date.strftime('%B %d, %Y')} have been issued. No more slots available."
+        )
+
+    # ── Cooldown: same phone cannot book twice in 24h for the same date ────
+    if token_data.phone:
+        existing = db.query(Token).filter(
+            Token.phone == token_data.phone,
+            Token.queue_id == queue_id,
+            Token.service_date == service_date,
+            Token.state.notin_([TokenState.CANCELLED, TokenState.NO_SHOW])
+        ).first()
+        if existing:
+            raise fastapi.HTTPException(
+                status_code=409,
+                detail=f"You already have Token #{existing.number} booked for {svc_date.strftime('%B %d, %Y')}."
+            )
+
+    # ── Assign next token number (resets to 1 each day) ────────────────────
     last_token = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.service_date == service_date
     ).order_by(Token.number.desc()).first()
-    next_number = (last_token.number + 1) if last_token else 101
-    
-    # Count current waiting tokens for ML input
-    waiting_count = db.query(Token).filter(
-        Token.queue_id == queue_id,
-        Token.state == TokenState.WAITING,
-        Token.service_date == service_date
-    ).count()
-    
-    # Calculate Attendance Risk Score
+    next_number = (last_token.number + 1) if last_token else 1
+
+    # ── Compute estimated reporting time ────────────────────────────────────
+    # Office: 10:00 AM to 5:00 PM = 420 minutes
+    # Interval = 420 / daily_limit (or 5 min default if unlimited)
+    OFFICE_START_HOUR = 10
+    TOTAL_OFFICE_MINUTES = 420  # 7 hours
+    if queue.daily_limit and queue.daily_limit > 0:
+        interval_minutes = TOTAL_OFFICE_MINUTES / queue.daily_limit
+    else:
+        interval_minutes = 5  # Default 5-min slots when unlimited
+
+    slot_offset = (next_number - 1) * interval_minutes
+    reporting_hour = OFFICE_START_HOUR + int(slot_offset // 60)
+    reporting_minute = int(slot_offset % 60)
+    # Format as 12-hr time
+    dt_slot = datetime(svc_date.year, svc_date.month, svc_date.day, reporting_hour, reporting_minute)
+    reporting_time_str = dt_slot.strftime("%I:%M %p")  # e.g. "10:30 AM"
+
+    # ── Risk scoring ────────────────────────────────────────────────────────
     risk_status = "reliable"
     requires_confirmation = 0
-    
     if token_data.phone:
         history_tokens = db.query(Token).filter(
             Token.phone == token_data.phone,
             Token.state.in_([TokenState.COMPLETED, TokenState.NO_SHOW, TokenState.CANCELLED])
         ).all()
-        
         total_history = len(history_tokens)
         if total_history >= 3:
             attended = sum(1 for t in history_tokens if t.state == TokenState.COMPLETED)
             score = attended / total_history
-            
             if score > 0.8:
                 risk_status = "reliable"
             elif score >= 0.5:
@@ -379,65 +415,75 @@ async def create_token(
             else:
                 risk_status = "high_risk"
                 requires_confirmation = 1
-    
-    # Create token
+
+    # ── Create token ────────────────────────────────────────────────────────
+    waiting_count = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.state == TokenState.WAITING,
+        Token.service_date == service_date
+    ).count()
+
+    now_utc = datetime.utcnow()
+    estimated_minutes = ml_engine.predict(now_utc.hour, now_utc.weekday(), waiting_count)
+
     db_token = Token(
         id=str(uuid.uuid4()),
         queue_id=queue_id,
         number=next_number,
+        name=token_data.name,
         phone=token_data.phone,
-        email=token_data.email,
         state=TokenState.WAITING,
         service_date=service_date,
         secret_token=str(uuid.uuid4()),
         verification_pin=str(random.randint(1000, 9999)),
         risk_status=risk_status,
         requires_confirmation=requires_confirmation,
-        is_confirmed=0
+        is_confirmed=0,
+        estimated_wait_minutes=estimated_minutes,
+        estimated_reporting_time=reporting_time_str,
     )
-    
-    # Send Booking / No-Show Confirmation SMS in the background
+
     if token_data.phone:
-        msg = f"Your Pālo ticket is confirmed! Ticket #{db_token.number}."
+        msg = (
+            f"Your Pālo ticket is confirmed!\n"
+            f"Token #{db_token.number} | Date: {svc_date.strftime('%b %d, %Y')} | "
+            f"Report by: {reporting_time_str}"
+        )
         if requires_confirmation == 1:
-            msg += "\nACTION REQUIRED: Based on your attendance history, you must reply 'YES' to this message to keep your slot."
+            msg += "\nACTION REQUIRED: Reply 'YES' to confirm your attendance."
         background_tasks.add_task(send_sms, token_data.phone, msg)
-        
-    # Predict wait time
-    now = datetime.utcnow()
-    hour = now.hour
-    day_of_week = now.weekday()
-    estimated_minutes = ml_engine.predict(hour, day_of_week, waiting_count)
-    db_token.estimated_wait_minutes = estimated_minutes
-    
+
     db.add(db_token)
     db.commit()
     db.refresh(db_token)
-    
     return db_token
 
 
 @app.get("/queues/{queue_id}/tokens", response_model=TokenListResponse)
-async def list_tokens(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
-    """List all tokens in a queue"""
+async def list_tokens(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
+    """List all tokens in a queue for a given date (YYYY-MM-DD). Defaults to today (Nepal time)."""
+    from zoneinfo import ZoneInfo
+    from datetime import date as date_type
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
-    
-    from datetime import timedelta
-    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    if service_day == "tomorrow":
-        target_date += timedelta(days=1)
-    
+
+    NPT = ZoneInfo("Asia/Kathmandu")
+    if service_date:
+        svc = date_type.fromisoformat(service_date)
+    else:
+        svc = datetime.now(NPT).date()
+    target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+
     tokens = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.service_date == target_date
-    ).all()
-    
-    waiting = sum(1 for t in tokens if t.state == TokenState.WAITING)
-    serving = sum(1 for t in tokens if t.state == TokenState.SERVING)
+    ).order_by(Token.number).all()
+
+    waiting   = sum(1 for t in tokens if t.state == TokenState.WAITING)
+    serving   = sum(1 for t in tokens if t.state == TokenState.SERVING)
     completed = sum(1 for t in tokens if t.state == TokenState.COMPLETED)
-    
+
     return TokenListResponse(
         tokens=tokens,
         total=len(tokens),
@@ -619,60 +665,69 @@ async def update_counter(
 # ============================================================================
 
 @app.get("/queues/{queue_id}/stats", response_model=QueueStatsResponse)
-async def get_queue_stats(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
-    """Get queue statistics"""
+async def get_queue_stats(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
+    """Get queue statistics for a given date (YYYY-MM-DD). Defaults to today (Nepal time)."""
+    from zoneinfo import ZoneInfo
+    from datetime import date as date_type
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
-    
-    from datetime import timedelta
-    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    if service_day == "tomorrow":
-        target_date += timedelta(days=1)
-    
+
+    NPT = ZoneInfo("Asia/Kathmandu")
+    if service_date:
+        svc = date_type.fromisoformat(service_date)
+    else:
+        svc = datetime.now(NPT).date()
+    target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+
     waiting = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.WAITING,
         Token.service_date == target_date
     ).count()
-    
+
     serving = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.SERVING,
         Token.service_date == target_date
     ).count()
-    
+
     completed = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.COMPLETED,
         Token.service_date == target_date
     ).count()
-    
+
+    skipped = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.state.in_([TokenState.SKIPPED, TokenState.NO_SHOW]),
+        Token.service_date == target_date
+    ).count()
+
     total_issued = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.service_date == target_date
     ).count()
-    
+
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
     active_counters = sum(1 for c in counters if c.status != "idle")
-    
-    # Calculate average wait time
+
     completed_tokens = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.COMPLETED,
         Token.wait_time_minutes != None
     ).all()
-    
     avg_wait = None
     if completed_tokens:
         avg_wait = sum(t.wait_time_minutes for t in completed_tokens) / len(completed_tokens)
-    
+
     return QueueStatsResponse(
         queue_id=queue_id,
         queue_name=queue.name,
         total_waiting=waiting,
         total_serving=serving,
         total_completed_today=completed,
+        total_skipped=skipped,
         total_issued=total_issued,
         avg_wait_time=avg_wait,
         counters_active=active_counters,
@@ -681,33 +736,36 @@ async def get_queue_stats(queue_id: str, service_day: str = "today", db: Session
 
 
 @app.get("/queues/{queue_id}/operator-view", response_model=OperatorQueueResponse)
-async def get_operator_view(queue_id: str, service_day: str = "today", db: Session = fastapi.Depends(get_db)):
-    """Get queue data for operator dashboard"""
+async def get_operator_view(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
+    """Get queue data for operator dashboard for a given date (YYYY-MM-DD). Defaults to today (Nepal time)."""
+    from zoneinfo import ZoneInfo
+    from datetime import date as date_type
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
-    
-    from datetime import timedelta
-    target_date = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-    if service_day == "tomorrow":
-        target_date += timedelta(days=1)
-    
+
+    NPT = ZoneInfo("Asia/Kathmandu")
+    if service_date:
+        svc = date_type.fromisoformat(service_date)
+    else:
+        svc = datetime.now(NPT).date()
+    target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+
     waiting = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.WAITING,
         Token.service_date == target_date
-    ).order_by(Token.joined_at).all()
-    
+    ).order_by(Token.number).all()
+
     serving = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.SERVING,
         Token.service_date == target_date
     ).all()
-    
+
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
-    
     next_token = waiting[0] if waiting else None
-    
+
     return OperatorQueueResponse(
         queue_id=queue_id,
         queue_name=queue.name,

@@ -24,16 +24,19 @@ export const queueAPI = {
   list: (orgId: string) => api.get(`/organizations/${orgId}/queues`),
   get: (id: string) => api.get(`/queues/${id}`),
   update: (id: string, data: any) => api.patch(`/queues/${id}`, data),
-  getStats: (id: string, service_day?: string) => api.get(`/queues/${id}/stats${service_day ? `?service_day=${service_day}` : ''}`),
-  getOperatorView: (id: string, service_day?: string) => api.get(`/queues/${id}/operator-view${service_day ? `?service_day=${service_day}` : ''}`),
+  getStats: (id: string, service_date?: string) =>
+    api.get(`/queues/${id}/stats${service_date ? `?service_date=${service_date}` : ''}`),
+  getOperatorView: (id: string, service_date?: string) =>
+    api.get(`/queues/${id}/operator-view${service_date ? `?service_date=${service_date}` : ''}`),
   predict: (id: string) => api.get(`/queues/${id}/predict`),
 };
 
 // Token APIs
 export const tokenAPI = {
-  create: (queueId: string, data: { phone?: string; email?: string; service_day?: 'today' | 'tomorrow' }) =>
+  create: (queueId: string, data: { name?: string; phone?: string; service_date?: string }) =>
     api.post(`/queues/${queueId}/tokens`, data),
-  list: (queueId: string, service_day?: string) => api.get(`/queues/${queueId}/tokens${service_day ? `?service_day=${service_day}` : ''}`),
+  list: (queueId: string, service_date?: string) =>
+    api.get(`/queues/${queueId}/tokens${service_date ? `?service_date=${service_date}` : ''}`),
   get: (id: string) => {
     const secret = localStorage.getItem(`token_secret_${id}`);
     return api.get(`/tokens/${id}`, {

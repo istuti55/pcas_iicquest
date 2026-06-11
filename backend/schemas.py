@@ -70,20 +70,21 @@ class ImpactStatsResponse(BaseModel):
 
 # Token Schemas
 class TokenCreate(BaseModel):
+    name: Optional[str] = None
     phone: Optional[str] = None
-    email: Optional[str] = None
-    service_day: Optional[str] = "today"  # today or tomorrow
+    service_date: Optional[str] = None  # YYYY-MM-DD — defaults to today if omitted
 
 
 class TokenResponse(BaseModel):
     id: str
     queue_id: str
     number: int
+    name: Optional[str]
     phone: Optional[str]
-    email: Optional[str]
     state: TokenStateEnum
     service_date: datetime
     verification_pin: str
+    estimated_reporting_time: Optional[str] = None
     joined_at: datetime
     called_at: Optional[datetime]
     completed_at: Optional[datetime]
@@ -149,6 +150,7 @@ class QueueStatsResponse(BaseModel):
     total_waiting: int
     total_serving: int
     total_completed_today: int
+    total_skipped: int
     total_issued: int
     avg_wait_time: Optional[float]
     counters_active: int

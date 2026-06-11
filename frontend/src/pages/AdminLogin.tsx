@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { adminAPI } from '../services/api';
-import { ShieldAlert, ArrowLeft, Lock, Loader } from 'lucide-react';
+import { ShieldAlert, ArrowLeft, Lock, Loader, ShieldCheck } from 'lucide-react';
 
 interface AdminLoginProps {
   onSuccess: () => void;
@@ -8,10 +8,10 @@ interface AdminLoginProps {
 }
 
 export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
-  const [pin, setPin] = useState('');
+  const [pin, setPin]         = useState('');
   const [adminPin, setAdminPin] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const [shake, setShake] = useState(false);
+  const [error, setError]     = useState(false);
+  const [shake, setShake]     = useState(false);
   const [loadingPin, setLoadingPin] = useState(true);
 
   useEffect(() => {
@@ -48,86 +48,90 @@ export default function AdminLogin({ onSuccess, onBack }: AdminLoginProps) {
   const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'];
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden selection:none">
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 relative overflow-hidden">
+      {/* Background */}
+      <div className="fixed inset-0 -z-10 bg-[#0a0f1e]">
+        <div className="absolute top-0 left-1/3 w-[500px] h-[350px] bg-blue-600/5 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-1/3 w-[400px] h-[300px] bg-violet-600/5 rounded-full blur-[100px]" />
+      </div>
+
+      {/* Back button */}
       <button
         onClick={onBack}
-        className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 hover:text-white transition-all bg-white/5 px-4 py-2 rounded-2xl border border-white/5"
+        className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors bg-white/[0.04] hover:bg-white/[0.07] px-4 py-2 rounded-xl border border-white/[0.07] text-sm font-medium"
       >
-        <ArrowLeft size={18} /> Home
+        <ArrowLeft size={16} /> Home
       </button>
 
-      <div className={`w-full max-w-sm animate-in transition-transform duration-500 ${shake ? 'animate-shake' : ''}`}>
-        <div className="text-center mb-12">
-          <div className="w-24 h-24 glass rounded-[2rem] flex items-center justify-center mx-auto mb-10 relative group">
-            <div className={`absolute inset-0 rounded-[2rem] transition-opacity duration-700 blur-2xl ${error ? 'bg-red-500/20' : 'bg-blue-500/20'}`} />
-            <div className="relative z-10 glass w-full h-full rounded-[2rem] flex items-center justify-center border-white/10">
-              {loadingPin
-                ? <Loader size={36} className="text-slate-600 animate-spin" />
-                : error
-                  ? <ShieldAlert size={36} className="text-red-500" />
-                  : <Lock size={36} className={`${pin.length > 0 ? 'text-blue-400' : 'text-slate-600'} transition-colors duration-500`} />
-              }
-            </div>
+      <div className={`w-full max-w-sm animate-slide-up ${shake ? 'animate-shake' : ''}`}>
+        {/* Header */}
+        <div className="text-center mb-10">
+          <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 border transition-all duration-500 ${
+            error
+              ? 'bg-red-500/10 border-red-500/25 shadow-lg shadow-red-500/10'
+              : 'bg-white/[0.04] border-white/[0.08]'
+          }`}>
+            {loadingPin
+              ? <Loader size={32} className="text-slate-500 animate-spin" />
+              : error
+                ? <ShieldAlert size={32} className="text-red-400" />
+                : pin.length > 0
+                  ? <Lock size={32} className="text-blue-400" />
+                  : <ShieldCheck size={32} className="text-slate-400" />
+            }
           </div>
-          <h1 className="text-4xl font-black text-white mb-3 tracking-tighter">Staff Access</h1>
-          <p className="text-slate-500 font-medium tracking-[0.3em] uppercase text-[9px]">Identity Verification Required</p>
+          <h1 className="text-2xl font-bold text-white mb-1.5">Staff Access</h1>
+          <p className="text-slate-500 text-sm">Enter your 4-digit PIN to continue</p>
         </div>
 
-        {/* PIN Indicators */}
-        <div className="flex justify-center gap-6 mb-14">
+        {/* PIN Dots */}
+        <div className="flex justify-center gap-5 mb-10">
           {[0,1,2,3].map(i => (
             <div
               key={i}
-              className={`w-3.5 h-3.5 rounded-full transition-all duration-500 border-2 ${
+              className={`w-3.5 h-3.5 rounded-full transition-all duration-300 border-2 ${
                 pin.length > i
-                  ? (error ? 'bg-red-500 border-red-400 scale-125 !shadow-[0_0_15px_rgba(239,68,68,0.5)]' : 'bg-blue-500 border-blue-400 scale-125 glow-blue')
-                  : 'bg-transparent border-slate-800'
+                  ? error
+                    ? 'bg-red-500 border-red-400 scale-110 shadow-md shadow-red-500/30'
+                    : 'bg-blue-500 border-blue-400 scale-110 shadow-md shadow-blue-500/30'
+                  : 'bg-transparent border-slate-700'
               }`}
             />
           ))}
         </div>
 
-        {/* Custom Numpad */}
-        <div className="grid grid-cols-3 gap-5">
+        {/* Numpad */}
+        <div className="grid grid-cols-3 gap-3">
           {keys.map((key, i) => (
             <button
               key={i}
+              id={key !== '' && key !== '⌫' ? `numpad-${key}` : key === '⌫' ? 'numpad-delete' : undefined}
               onClick={() => {
                 if (key === '⌫') handleDelete();
                 else if (key !== '') handleDigit(key);
               }}
               disabled={key === '' || loadingPin}
-              className={`h-20 rounded-[2rem] text-2xl font-black transition-all duration-300 active:scale-95 flex items-center justify-center ${
+              className={`h-16 rounded-2xl text-xl font-bold transition-all duration-200 active:scale-95 ${
                 key === ''
-                  ? 'bg-transparent cursor-default'
+                  ? 'bg-transparent cursor-default pointer-events-none'
                   : key === '⌫'
-                    ? 'glass hover:bg-white/5 text-slate-500'
-                    : 'glass text-white hover:bg-white/10 hover:border-blue-500/30'
-              } disabled:opacity-40`}
+                    ? 'bg-white/[0.03] hover:bg-white/[0.07] text-slate-400 border border-white/[0.06]'
+                    : 'bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/[0.07] hover:border-blue-500/30'
+              } disabled:opacity-30`}
             >
               {key}
             </button>
           ))}
         </div>
 
+        {/* Error message */}
         {error && (
-          <div className="mt-12 flex items-center justify-center gap-3">
-            <div className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-            <p className="text-red-400 text-[10px] font-black uppercase tracking-[0.3em]">Access Denied</p>
+          <div className="mt-6 flex items-center justify-center gap-2 animate-slide-up">
+            <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
+            <p className="text-red-400 text-sm font-medium">Incorrect PIN. Try again.</p>
           </div>
         )}
       </div>
-
-      <style>{`
-        @keyframes shake {
-          0%, 100% { transform: translateX(0); }
-          20% { transform: translateX(-10px); }
-          40% { transform: translateX(10px); }
-          60% { transform: translateX(-10px); }
-          80% { transform: translateX(10px); }
-        }
-        .animate-shake { animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) both; }
-      `}</style>
     </div>
   );
 }

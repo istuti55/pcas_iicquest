@@ -162,10 +162,9 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
       </main>
 
       {/* Ticker Footer */}
-      <footer className="bg-blue-600 px-12 py-3 flex justify-between items-center relative overflow-hidden">
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent)] animate-glow" style={{ backgroundSize: '200% 100%' }} />
-        <p className="relative z-10 text-blue-100 text-xs font-black uppercase tracking-[0.3em]">
-           Welcome to Pālo Queue Management System • Please monitor your token number • Stay updated via your mobile portal
+      <footer className="bg-gradient-to-r from-blue-700 to-violet-700 px-10 py-3 flex items-center">
+        <p className="text-white/80 text-xs font-medium tracking-wide">
+          Welcome to Pālo Queue Management &nbsp;·&nbsp; Please watch for your token number &nbsp;·&nbsp; Track updates via your mobile
         </p>
       </footer>
 

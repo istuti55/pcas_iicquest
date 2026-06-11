@@ -5,6 +5,7 @@ import UserPortal from './pages/UserPortal';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
 import DisplayBoard from './pages/DisplayBoard';
+import { Zap, RefreshCw, AlertTriangle } from 'lucide-react';
 
 export type AppView = 'home' | 'user' | 'admin-login' | 'admin' | 'display';
 
@@ -15,8 +16,8 @@ export default function App() {
     return v || 'home';
   });
   const [isHealthy, setIsHealthy] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [queueId, setQueueId] = useState<string | null>(() =>
+  const [loading, setLoading]     = useState(true);
+  const [queueId, setQueueId]     = useState<string | null>(() =>
     localStorage.getItem('palo_queue_id')
   );
   const [orgId, setOrgId] = useState<string | null>(() =>
@@ -29,20 +30,18 @@ export default function App() {
         await healthAPI.check();
         setIsHealthy(true);
 
-        let savedOrgId = localStorage.getItem('palo_org_id');
+        let savedOrgId   = localStorage.getItem('palo_org_id');
         let savedQueueId = localStorage.getItem('palo_queue_id');
 
         try {
           const orgsRes = await organizationAPI.listAll();
-          if (!orgsRes.data || orgsRes.data.length === 0) {
-            throw new Error("No organizations found");
-          }
-          
+          if (!orgsRes.data || orgsRes.data.length === 0) throw new Error('No organizations');
+
           const orgExists = savedOrgId && orgsRes.data.some((o: any) => o.id === savedOrgId);
           if (!orgExists) {
             savedOrgId = orgsRes.data[0].id;
             localStorage.setItem('palo_org_id', savedOrgId!);
-            savedQueueId = null; 
+            savedQueueId = null;
             localStorage.removeItem('palo_queue_id');
             localStorage.removeItem('palo_active_token_id');
           }
@@ -61,7 +60,7 @@ export default function App() {
           savedQueueId = null;
         }
 
-        if (savedOrgId) setOrgId(savedOrgId);
+        if (savedOrgId)   setOrgId(savedOrgId);
         if (savedQueueId) setQueueId(savedQueueId);
       } catch {
         setIsHealthy(false);
@@ -95,48 +94,61 @@ export default function App() {
     window.location.reload();
   };
 
+  /* ── Loading Screen ────────────────────────────────────────────────── */
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950">
+      <div className="flex items-center justify-center min-h-screen bg-[#0a0f1e]">
         <div className="text-center">
-          <div className="inline-block w-14 h-14 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-          <p className="text-slate-400 text-lg font-medium">Starting Pālo...</p>
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center mx-auto mb-5 shadow-xl shadow-blue-500/25">
+            <Zap size={24} className="text-white" fill="white" />
+          </div>
+          <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500 text-sm font-medium">Starting Pālo…</p>
         </div>
       </div>
     );
   }
 
+  /* ── Backend Offline ───────────────────────────────────────────────── */
   if (!isHealthy) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950">
-        <div className="bg-slate-900 border border-red-800 rounded-2xl p-10 max-w-sm w-full text-center shadow-2xl">
-          <div className="text-5xl mb-4">⚠️</div>
-          <h2 className="text-2xl font-bold text-red-400 mb-2">Backend Offline</h2>
-          <p className="text-slate-400 mb-6">Cannot reach the API at localhost:8000. Make sure the backend is running.</p>
+      <div className="flex items-center justify-center min-h-screen bg-[#0a0f1e] p-6">
+        <div className="w-full max-w-sm bg-[#111827] border border-red-500/20 rounded-2xl p-8 text-center shadow-2xl">
+          <div className="w-14 h-14 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-5">
+            <AlertTriangle size={24} className="text-red-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">Backend Offline</h2>
+          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+            Cannot reach the server at <code className="text-slate-300 text-xs">localhost:8000</code>. Please make sure the backend is running.
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-3 rounded-xl transition-colors"
+            className="w-full btn-primary h-12 text-sm"
           >
-            Retry
+            <RefreshCw size={16} /> Try Again
           </button>
         </div>
       </div>
     );
   }
 
-  // If no queue resolved at all, show a simple error state
+  /* ── No Queue ──────────────────────────────────────────────────────── */
   if (!queueId) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-slate-950">
-        <div className="bg-slate-900 border border-amber-800 rounded-2xl p-10 max-w-sm w-full text-center shadow-2xl">
-          <div className="text-5xl mb-4">🗂️</div>
-          <h2 className="text-2xl font-bold text-amber-400 mb-2">No Queue Found</h2>
-          <p className="text-slate-400 mb-6">The backend hasn't created any queues yet. Make sure the backend has fully started.</p>
+      <div className="flex items-center justify-center min-h-screen bg-[#0a0f1e] p-6">
+        <div className="w-full max-w-sm bg-[#111827] border border-amber-500/20 rounded-2xl p-8 text-center shadow-2xl">
+          <div className="w-14 h-14 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center mx-auto mb-5">
+            <AlertTriangle size={24} className="text-amber-400" />
+          </div>
+          <h2 className="text-xl font-bold text-white mb-2">No Queue Found</h2>
+          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+            The backend hasn't created any queues yet. Make sure the backend has fully started.
+          </p>
           <button
             onClick={() => window.location.reload()}
-            className="w-full bg-amber-600 hover:bg-amber-500 text-white font-semibold py-3 rounded-xl transition-colors"
+            className="w-full btn-primary h-12 text-sm"
           >
-            Retry
+            <RefreshCw size={16} /> Retry
           </button>
         </div>
       </div>
@@ -161,15 +173,7 @@ export default function App() {
   };
 
   return (
-    <div className="relative min-h-screen bg-[#020617] selection:bg-blue-500/30 selection:text-blue-200">
-      <div className="vanguard-bg" />
-      
-      {/* Dynamic Background Blobs */}
-      <div className="fixed inset-0 overflow-hidden pointer-events-none -z-10">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-600/10 rounded-full blur-[120px] animate-pulse" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-violet-600/10 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '3s' }} />
-      </div>
-
+    <div className="relative min-h-screen bg-[#0a0f1e]">
       <div className="relative z-10 min-h-screen">
         {renderContent()}
       </div>

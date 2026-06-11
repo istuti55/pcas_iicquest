@@ -1,7 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
 import { tokenAPI, queueAPI } from '../services/api';
 import TokenBadge from '../components/TokenBadge';
-import { ArrowLeft, Clock, Hash, Users, AlertCircle, Sparkles, ArrowRight, Brain, Zap, ShieldAlert } from 'lucide-react';
+import {
+  ArrowLeft, Clock, Hash, Users, AlertCircle,
+  ArrowRight, Brain, ShieldAlert, CheckCircle, User, Phone, ChevronDown,
+  Calendar, Bell
+} from 'lucide-react';
 
 interface UserPortalProps {
   orgId: string;
@@ -9,40 +13,54 @@ interface UserPortalProps {
   onBack: () => void;
 }
 
+// Helper: get today's date in YYYY-MM-DD (local)
+const todayStr = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
+// Format YYYY-MM-DD to "Mon, Jun 11"
+const formatDate = (iso: string) => {
+  const d = new Date(iso + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+};
+
 export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortalProps) {
+  const [name, setName]   = useState('');
   const [phone, setPhone] = useState('');
-  const [email, setEmail] = useState('');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [token, setToken] = useState<any>(null);
+  const [error, setError]    = useState('');
+  const [token, setToken]    = useState<any>(null);
   const [showInsights, setShowInsights] = useState(false);
   const [cancelLoading, setCancelLoading] = useState(false);
-  const [serviceDate, setServiceDate] = useState<'today' | 'tomorrow'>('today');
+  const [serviceDate, setServiceDate] = useState<string>(todayStr());
   const [queuePosition, setQueuePosition] = useState<number | null>(null);
-  const [totalWaiting, setTotalWaiting] = useState<number>(0);
-  const [mlPrediction, setMlPrediction] = useState<{ estimated_wait_minutes: number; source: string; current_waiting: number; is_ml_trained: boolean } | null>(null);
-
+  const [totalWaiting, setTotalWaiting]   = useState<number>(0);
+  const [mlPrediction, setMlPrediction]   = useState<{ estimated_wait_minutes: number; source: string; current_waiting: number; is_ml_trained: boolean } | null>(null);
   const [queues, setQueues] = useState<any[]>([]);
   const [selectedQueueId, setSelectedQueueId] = useState<string>(defaultQueueId);
 
-  const notified1MinRef = useRef(false);
+  const notified1MinRef  = useRef(false);
   const notifiedCalledRef = useRef(false);
 
+  // Fetch available queues
   useEffect(() => {
     const fetchQueues = async () => {
       try {
         const idToUse = orgId || localStorage.getItem('palo_org_id');
         if (!idToUse) return;
         const res = await queueAPI.list(idToUse);
-        setQueues(res.data);
-        if (res.data.length > 0 && (!selectedQueueId || !res.data.find((q: any) => q.id === selectedQueueId))) {
-          setSelectedQueueId(res.data[0].id);
+        const activeQueues = res.data.filter((q: any) => q.active === 1);
+        setQueues(activeQueues);
+        if (activeQueues.length > 0 && (!selectedQueueId || !activeQueues.find((q: any) => q.id === selectedQueueId))) {
+          setSelectedQueueId(activeQueues[0].id);
         }
       } catch {}
     };
     fetchQueues();
   }, [orgId, selectedQueueId]);
 
+  // Restore an active token session
   useEffect(() => {
     const activeTokenId = localStorage.getItem('palo_active_token_id');
     if (activeTokenId) {
@@ -57,15 +75,16 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     }
   }, []);
 
+  // Request browser notifications
   useEffect(() => {
     if ('Notification' in window && Notification.permission === 'default') {
       Notification.requestPermission();
     }
   }, []);
 
-  // Fetch ML prediction on join form (before getting a token)
+  // Live wait prediction (join form)
   useEffect(() => {
-    if (token || !selectedQueueId) return; // only on join form
+    if (token || !selectedQueueId) return;
     const fetchPrediction = async () => {
       try {
         const res = await queueAPI.predict(selectedQueueId);
@@ -77,6 +96,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     return () => clearInterval(interval);
   }, [selectedQueueId, token]);
 
+  // Live ticket refresh
   useEffect(() => {
     if (!token) return;
     const refresh = async () => {
@@ -92,13 +112,12 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
         const pos = waiting.findIndex((t: any) => t.id === token.id);
         setQueuePosition(pos >= 0 ? pos + 1 : null);
 
-        // Offline / Background Notifications
         if ('Notification' in window && Notification.permission === 'granted') {
           if (tRes.data.state === 'called' && !notifiedCalledRef.current) {
-            new Notification('Your Turn!', { body: 'Please proceed to the counter immediately.', requireInteraction: true });
+            new Notification("It's your turn!", { body: 'Please proceed to the counter now.', requireInteraction: true });
             notifiedCalledRef.current = true;
           } else if (tRes.data.state === 'waiting' && tRes.data.estimated_wait_minutes < 1.0 && !notified1MinRef.current) {
-            new Notification('Almost there!', { body: 'Less than a minute left! Get ready.' });
+            new Notification('Almost there!', { body: 'Less than a minute. Get ready!' });
             notified1MinRef.current = true;
           }
         }
@@ -114,10 +133,10 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     if (!selectedQueueId) return;
     setLoading(true); setError('');
     try {
-      const res = await tokenAPI.create(selectedQueueId, { 
-        phone: phone || undefined, 
-        email: email || undefined,
-        service_day: serviceDate
+      const res = await tokenAPI.create(selectedQueueId, {
+        name: name.trim() || undefined,
+        phone: phone || undefined,
+        service_date: serviceDate,
       });
       const newToken = res.data;
       if (newToken.secret_token) {
@@ -126,15 +145,13 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
       localStorage.setItem('palo_active_token_id', newToken.id);
       setToken(newToken);
     } catch (err: any) {
-      if (err.response?.status === 403) {
-        setError(err.response?.data?.detail || 'Restriction active: You cannot join this queue right now.');
-      } else {
-        setError(err.response?.data?.detail || 'Something went wrong. Please try again.');
-      }
-    } finally { setLoading(false); }
+      setError(err.response?.data?.detail || 'Something went wrong. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const isServing = token?.state === 'serving' || token?.state === 'called';
+  const isServing   = token?.state === 'serving' || token?.state === 'called';
   const isCompleted = token?.state === 'completed';
   const isCancelled = token?.state === 'cancelled';
 
@@ -148,8 +165,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
 
   const handleCancel = async () => {
     if (!token) return;
-    if (!confirm('Are you sure you want to cancel your queue ticket? This action cannot be undone.')) return;
-    
+    if (!confirm('Cancel your queue ticket? This cannot be undone.')) return;
     setCancelLoading(true);
     try {
       const res = await tokenAPI.updateState(token.id, 'cancelled');
@@ -172,300 +188,393 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     }
   };
 
-  // ── Token tracking ─────────────────────────────────────────────────────────
+  /* ── TICKET TRACKING VIEW ─────────────────────────────────────────── */
   if (token) {
+    // Parse service_date from token for display
+    const tokenDate = token.service_date
+      ? new Date(token.service_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      : '';
+
     return (
-      <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-        <button 
-          onClick={handleExit} 
-          className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 hover:text-white transition-all bg-white/5 px-4 py-2 rounded-2xl border border-white/5"
+      <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center p-5 relative overflow-hidden">
+        <div className="fixed inset-0 -z-10 bg-[#0a0f1e]">
+          <div className="absolute top-0 left-1/4 w-[500px] h-[350px] bg-blue-600/5 rounded-full blur-[100px]" />
+          <div className="absolute bottom-0 right-1/4 w-[400px] h-[300px] bg-violet-600/5 rounded-full blur-[100px]" />
+        </div>
+
+        {/* Back button */}
+        <button
+          onClick={handleExit}
+          className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors bg-white/[0.04] hover:bg-white/[0.07] px-4 py-2 rounded-xl border border-white/[0.07] text-sm font-medium"
         >
-          <ArrowLeft size={18} /> {isCompleted || isCancelled ? 'Home' : 'Exit'}
+          <ArrowLeft size={16} /> {isCompleted || isCancelled ? 'Go Home' : 'Exit'}
         </button>
 
-        <div className="relative z-10 w-full max-w-lg animate-in">
-          <div className="text-center mb-12">
-            <h2 className="text-4xl font-black text-white mb-2 tracking-tight">Queue Ticket</h2>
-            <p className="text-slate-500 font-medium tracking-wide uppercase text-[10px] tracking-[0.4em]">Live Status Update</p>
+        <div className="relative z-10 w-full max-w-md animate-slide-up pt-16">
+          {/* Header */}
+          <div className="text-center mb-8">
+            <h1 className="text-3xl font-bold text-white mb-1">Your Ticket</h1>
+            <p className="text-slate-500 text-sm">Live status update</p>
           </div>
 
-          {/* Ticket Card - The Heart of the Experience */}
-          <div className={`glass-card relative mb-10 overflow-hidden group ${isServing ? 'glow-blue' : ''}`}>
-            {/* Shimmer Effect */}
-            <div className="absolute inset-0 shimmer pointer-events-none opacity-20" />
-            
-            <div className="relative z-10 text-center">
-              <span className={`badge-premium mb-10 inline-block border-white/10 ${
-                isServing ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : ''
-              }`}>
-                {isServing ? '● Active Session' : isCompleted ? '✓ Completed' : 'Waiting in Line'}
-              </span>
+          {/* Main Ticket Card */}
+          <div className={`rounded-2xl border p-8 mb-5 relative overflow-hidden ${
+            isServing
+              ? 'bg-emerald-500/5 border-emerald-500/25 shadow-lg shadow-emerald-500/10'
+              : isCompleted || isCancelled
+              ? 'bg-white/[0.02] border-white/[0.07]'
+              : 'bg-white/[0.03] border-white/[0.08]'
+          }`}>
+            {!isCompleted && !isCancelled && (
+              <div className="absolute inset-0 shimmer pointer-events-none opacity-30" />
+            )}
 
-              <div className="mb-10">
-                <p className="text-slate-500 text-[10px] font-black tracking-[.4em] uppercase mb-4">Token Identity</p>
-                <div className="scale-125 origin-center inline-block">
-                  <TokenBadge 
-                    number={token.number} 
-                    status={token.state === 'called' ? 'called' : token.state as any} 
-                    size="lg" 
+            <div className="relative z-10 text-center">
+              {/* Status Badge */}
+              <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-semibold mb-6 border ${
+                isServing    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' :
+                isCompleted  ? 'bg-slate-500/10 text-slate-400 border-slate-500/25' :
+                isCancelled  ? 'bg-red-500/10 text-red-400 border-red-500/25' :
+                               'bg-blue-500/10 text-blue-400 border-blue-500/25'
+              }`}>
+                {isServing   && <><span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" /> It's Your Turn!</>}
+                {isCompleted && <><CheckCircle size={13} /> Service Completed</>}
+                {isCancelled && 'Ticket Cancelled'}
+                {!isServing && !isCompleted && !isCancelled && <><span className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" /> Waiting in Queue</>}
+              </div>
+
+              {/* Token Number */}
+              <div className="mb-5">
+                <p className="text-xs text-slate-500 font-medium uppercase tracking-widest mb-3">Token Number</p>
+                <div className="scale-110 origin-center inline-block">
+                  <TokenBadge
+                    number={token.number}
+                    status={token.state === 'called' ? 'called' : token.state as any}
+                    size="lg"
                   />
                 </div>
               </div>
 
-              {/* Progress visual */}
-              {!isCompleted && !isServing && (
-                <div className="h-1 w-32 bg-white/5 rounded-full mx-auto mb-10 overflow-hidden">
-                  <div className="h-full bg-blue-500/40 w-1/3 animate-[shimmer_2s_infinite]" />
+              {/* Progress bar */}
+              {!isCompleted && !isServing && !isCancelled && (
+                <div className="h-1 w-24 bg-white/[0.05] rounded-full mx-auto overflow-hidden">
+                  <div className="h-full bg-blue-500/50 w-1/3 shimmer" />
                 </div>
               )}
 
+              {/* Serving message */}
               {isServing && (
-                <div className="py-5 px-8 bg-emerald-500/10 border border-emerald-500/20 rounded-3xl animate-in mb-4">
-                  <p className="text-emerald-400 font-black uppercase tracking-widest text-[11px] mb-1">Your Turn</p>
-                  <p className="text-white font-bold">Please proceed to the counter</p>
+                <div className="mt-4 py-3 px-5 bg-emerald-500/10 border border-emerald-500/20 rounded-xl">
+                  <p className="text-emerald-400 font-semibold text-sm">Please proceed to the counter now</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* High Risk Confirmation Required */}
-          {token.requires_confirmation === 1 && !token.is_confirmed && !isCompleted && !isCancelled && (
-            <div className="glass rounded-[2rem] p-8 mb-10 text-center relative overflow-hidden border border-red-500/30 bg-red-500/5 animate-pulse">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-red-500/20 blur-3xl -mr-16 -mt-16 rounded-full" />
-              <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/30">
-                <ShieldAlert size={20} className="text-red-400" />
-              </div>
-              <h3 className="text-2xl font-black text-white mb-2 tracking-tight">Action Required</h3>
-              <p className="text-sm text-slate-400 mb-6 font-medium px-4">
-                Based on your attendance history, you are required to manually confirm your appointment to keep this slot.
-              </p>
-              <button
-                onClick={handleConfirm}
-                className="w-full bg-red-500 hover:bg-red-400 text-white font-black uppercase tracking-widest text-[11px] py-4 rounded-xl transition-colors shadow-[0_0_20px_rgba(239,68,68,0.3)]"
-              >
-                Confirm Attendance
-              </button>
+          {/* Booking Details */}
+          <div className="grid grid-cols-2 gap-3 mb-5">
+            <div className="rounded-xl p-4 bg-white/[0.03] border border-white/[0.06] text-center">
+              <div className="flex justify-center mb-2"><Calendar size={14} className="text-blue-400" /></div>
+              <p className="text-xs text-slate-500 mt-0.5">Service Date</p>
+              <p className="text-sm font-bold text-white mt-1 leading-tight">{tokenDate}</p>
             </div>
-          )}
-
-          {/* Verification PIN Display */}
-          <div className="glass rounded-[2rem] p-8 mb-10 text-center relative group">
-            <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500/5 blur-3xl -mr-16 -mt-16 rounded-full" />
-            <p className="text-[10px] font-black uppercase tracking-[.4em] text-slate-500 mb-3">Verification Code</p>
-            <p className="text-5xl font-black text-white tracking-[0.25em] text-gradient">{token.verification_pin}</p>
-            <p className="text-[10px] text-slate-600 mt-4 font-bold border-t border-white/5 pt-4">Present this to the operator</p>
-          </div>
-
-          {/* Live Position Info */}
-          {!isCompleted && (
-            <div className="grid grid-cols-3 gap-6">
-              <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors">
-                <Hash size={14} className="text-blue-400 mx-auto mb-3" />
-                <p className="text-2xl font-black text-white">{queuePosition ?? '—'}</p>
-                <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">Position</p>
-              </div>
-              <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors relative">
-                <div className="absolute top-4 right-4">
-                  <Brain size={12} className="text-amber-500/30" />
-                </div>
-                <Clock size={14} className="text-amber-400 mx-auto mb-3" />
-                <p className="text-2xl font-black text-white">
-                  {token.estimated_wait_minutes ? Math.round(token.estimated_wait_minutes) : '—'}m
-                </p>
-                <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">AI Predict</p>
-              </div>
-              <div className="glass rounded-[2rem] p-6 text-center hover:bg-white/[0.05] transition-colors">
-                <Users size={14} className="text-purple-400 mx-auto mb-3" />
-                <p className="text-2xl font-black text-white">{totalWaiting}</p>
-                <p className="text-slate-500 text-[9px] uppercase font-black tracking-widest mt-1">Total</p>
-              </div>
-            </div>
-          )}
-
-          {/* User Insights & Actions */}
-          <div className="mt-8 animate-in" style={{ animationDelay: '0.2s' }}>
-            <button 
-              onClick={() => setShowInsights(!showInsights)}
-              className="w-full flex items-center justify-between p-5 glass rounded-2xl text-slate-400 hover:text-white transition-all hover:bg-white/5 border border-white/5"
-            >
-              <span className="text-[10px] font-black uppercase tracking-[0.3em]">View Ticket Insights</span>
-              <ArrowRight size={16} className={`transition-transform duration-300 ${showInsights ? 'rotate-90 text-blue-400' : ''}`} />
-            </button>
-            
-            {showInsights && (
-              <div className="mt-4 p-6 glass rounded-2xl animate-in space-y-6 text-left border border-white/5 shadow-2xl">
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Queue ID</p>
-                    <p className="font-bold text-slate-300 truncate">{token.queue_id.split('-')[0]}</p>
-                  </div>
-                  <div>
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Joined At</p>
-                    <p className="font-bold text-slate-300">
-                      {new Date(token.joined_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                  </div>
-                  {token.phone && (
-                    <div>
-                      <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Contact</p>
-                      <p className="font-bold text-slate-300">{token.phone}</p>
-                    </div>
-                  )}
-                  <div>
-                    <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-1">Status</p>
-                    <p className="font-bold text-slate-300 capitalize">{token.state}</p>
-                  </div>
-                </div>
-
-                {(!isCompleted && !isCancelled) && (
-                  <div className="pt-4 border-t border-white/5">
-                    <button 
-                      onClick={handleCancel}
-                      disabled={cancelLoading}
-                      className="w-full py-4 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white border border-red-500/20 transition-all flex justify-center items-center gap-2"
-                    >
-                      {cancelLoading ? (
-                        <span className="flex items-center gap-2">
-                           <span className="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin" />
-                           Canceling...
-                        </span>
-                      ) : (
-                        <>Cancel Queue Ticket</>
-                      )}
-                    </button>
-                  </div>
-                )}
+            {token.estimated_reporting_time && (
+              <div className="rounded-xl p-4 bg-white/[0.03] border border-white/[0.06] text-center">
+                <div className="flex justify-center mb-2"><Clock size={14} className="text-amber-400" /></div>
+                <p className="text-xs text-slate-500 mt-0.5">Report By</p>
+                <p className="text-xl font-bold text-amber-300 mt-1">{token.estimated_reporting_time}</p>
               </div>
             )}
           </div>
 
+          {/* Confirmation Required Alert */}
+          {token.requires_confirmation === 1 && !token.is_confirmed && !isCompleted && !isCancelled && (
+            <div className="rounded-2xl p-6 mb-5 border border-red-500/25 bg-red-500/5 animate-slide-up">
+              <div className="flex items-start gap-3 mb-4">
+                <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0">
+                  <ShieldAlert size={18} className="text-red-400" />
+                </div>
+                <div>
+                  <p className="font-semibold text-white text-sm mb-1">Confirmation Required</p>
+                  <p className="text-slate-400 text-xs leading-relaxed">
+                    Based on your attendance history, please confirm your spot to keep this ticket.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleConfirm}
+                className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-white font-semibold text-sm transition-colors"
+              >
+                Confirm My Attendance
+              </button>
+            </div>
+          )}
+
+          {/* Verification PIN */}
+          <div className="rounded-2xl p-6 mb-5 border border-white/[0.07] bg-white/[0.02] text-center">
+            <p className="text-xs text-slate-500 font-medium uppercase tracking-widest mb-2">Verification Code</p>
+            <p className="text-4xl font-bold text-white tracking-[0.2em] mb-1">{token.verification_pin}</p>
+            <p className="text-xs text-slate-600">Show this code to the counter staff</p>
+          </div>
+
+          {/* Live Stats */}
+          {!isCompleted && !isCancelled && (
+            <div className="grid grid-cols-3 gap-3 mb-5">
+              {[
+                { icon: <Hash size={14} className="text-blue-400" />, value: queuePosition ?? '—', label: 'Your Position' },
+                { icon: <Clock size={14} className="text-amber-400" />, value: token.estimated_wait_minutes != null ? `${Math.round(token.estimated_wait_minutes)}m` : '—', label: 'Est. Wait' },
+                { icon: <Users size={14} className="text-purple-400" />, value: totalWaiting, label: 'In Queue' },
+              ].map(stat => (
+                <div key={stat.label} className="rounded-xl p-4 text-center bg-white/[0.03] border border-white/[0.06]">
+                  <div className="flex justify-center mb-2">{stat.icon}</div>
+                  <p className="text-xl font-bold text-white">{stat.value}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">{stat.label}</p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Insights Toggle */}
+          {!isCompleted && !isCancelled && (
+            <div className="mb-4">
+              <button
+                onClick={() => setShowInsights(!showInsights)}
+                className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.05] transition-all text-sm text-slate-400 hover:text-slate-200"
+              >
+                <span className="font-medium">Ticket Details</span>
+                <ChevronDown size={16} className={`transition-transform duration-300 ${showInsights ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showInsights && (
+                <div className="mt-2 p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4 animate-slide-up">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium mb-1">Joined At</p>
+                      <p className="text-sm font-semibold text-slate-200">
+                        {new Date(token.joined_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                    {token.name && (
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium mb-1">Name</p>
+                        <p className="text-sm font-semibold text-slate-200">{token.name}</p>
+                      </div>
+                    )}
+                    {token.phone && (
+                      <div>
+                        <p className="text-xs text-slate-500 font-medium mb-1">Phone</p>
+                        <p className="text-sm font-semibold text-slate-200">{token.phone}</p>
+                      </div>
+                    )}
+                    <div>
+                      <p className="text-xs text-slate-500 font-medium mb-1">Status</p>
+                      <p className="text-sm font-semibold text-slate-200 capitalize">{token.state}</p>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-white/[0.05]">
+                    <button
+                      onClick={handleCancel}
+                      disabled={cancelLoading}
+                      className="w-full py-3 rounded-xl font-semibold text-sm bg-red-500/8 text-red-400 hover:bg-red-500 hover:text-white border border-red-500/20 transition-all flex justify-center items-center gap-2"
+                    >
+                      {cancelLoading
+                        ? <><span className="w-4 h-4 border-2 border-red-400/30 border-t-red-400 rounded-full animate-spin" /> Cancelling...</>
+                        : 'Cancel My Ticket'
+                      }
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Return Home Button */}
           {(isCompleted || isCancelled) && (
             <button
               onClick={handleExit}
-              className="w-full mt-6 py-4 rounded-xl font-black text-[11px] uppercase tracking-[0.2em] bg-blue-600 text-white shadow-xl hover:bg-blue-500 transition-colors"
+              className="w-full mt-2 py-3.5 rounded-xl font-semibold text-sm bg-gradient-to-r from-blue-600 to-violet-600 text-white hover:opacity-90 transition-opacity shadow-lg shadow-blue-500/20"
             >
-              Return Home
+              Return to Home
             </button>
           )}
 
-          <div className="mt-12 flex items-center justify-center gap-2 opacity-30">
-            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />
-            <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">
-              Live Connection Syncing
-            </p>
+          {/* Live sync indicator */}
+          <div className="mt-8 flex items-center justify-center gap-2 opacity-40">
+            <span className="live-dot" style={{ width: 6, height: 6 }} />
+            <span className="text-slate-400 text-xs font-medium">Updating live</span>
           </div>
         </div>
       </div>
     );
   }
 
+  /* ── JOIN FORM VIEW ────────────────────────────────────────────────── */
   return (
-    <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center p-6 relative overflow-hidden">
-      <button 
-        onClick={onBack} 
-        className="absolute top-8 left-8 flex items-center gap-2 text-slate-500 hover:text-white transition-all bg-white/5 px-4 py-2 rounded-2xl border border-white/5"
+    <div className="min-h-screen text-slate-100 flex flex-col items-center justify-center p-5 relative overflow-hidden">
+      <div className="fixed inset-0 -z-10 bg-[#0a0f1e]">
+        <div className="absolute top-0 left-1/4 w-[500px] h-[350px] bg-blue-600/5 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-1/4 w-[400px] h-[300px] bg-violet-600/5 rounded-full blur-[100px]" />
+      </div>
+
+      {/* Back */}
+      <button
+        onClick={onBack}
+        className="absolute top-6 left-6 flex items-center gap-2 text-slate-400 hover:text-white transition-colors bg-white/[0.04] hover:bg-white/[0.07] px-4 py-2 rounded-xl border border-white/[0.07] text-sm font-medium"
       >
-        <ArrowLeft size={18} /> Home
+        <ArrowLeft size={16} /> Home
       </button>
 
-      <div className="relative z-10 w-full max-w-lg animate-in">
-        <div className="text-center mb-12">
-          <div className="w-20 h-20 glass rounded-3xl flex items-center justify-center mx-auto mb-8 relative group">
-            <div className="absolute inset-0 bg-blue-500/20 blur-2xl group-hover:bg-blue-500/40 transition-all rounded-full" />
-            <Sparkles size={32} className="text-blue-400 relative z-10" />
+      <div className="relative z-10 w-full max-w-md animate-slide-up">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-violet-500/20 border border-blue-500/20 flex items-center justify-center mx-auto mb-5">
+            <Users size={28} className="text-blue-400" />
           </div>
-          <h1 className="text-5xl font-black text-white mb-4 tracking-tighter">Pālo Portal</h1>
-          <p className="text-slate-500 font-medium tracking-[0.2em] uppercase text-[10px]">Secure Queue Registration</p>
+          <h1 className="text-3xl font-bold text-white mb-2">Join the Queue</h1>
+          <p className="text-slate-400 text-sm">Fill in your details to get your token</p>
         </div>
 
+        {/* Error */}
         {error && (
-          <div className="flex items-center gap-4 bg-red-900/20 border border-red-500/20 p-6 rounded-3xl text-red-300 text-sm mb-10 animate-in shadow-2xl backdrop-blur-xl">
-            <AlertCircle size={24} className="shrink-0 text-red-500" />
-            <p className="font-bold tracking-tight">{error}</p>
+          <div className="flex items-start gap-3 bg-red-900/15 border border-red-500/20 p-4 rounded-xl text-red-300 text-sm mb-6 animate-slide-up">
+            <AlertCircle size={18} className="shrink-0 text-red-400 mt-0.5" />
+            <p>{error}</p>
           </div>
         )}
 
-        <div className="mb-10 flex gap-2 p-1.5 glass rounded-3xl relative z-10">
-          <button
-            onClick={() => setServiceDate('today')}
-            className={`flex-1 py-4 px-6 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all duration-500 ${
-              serviceDate === 'today' ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/30' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-            }`}
-          >
-            Today
-          </button>
-          <button
-            onClick={() => setServiceDate('tomorrow')}
-            className={`flex-1 py-4 px-6 rounded-2xl font-black text-[11px] uppercase tracking-[0.2em] transition-all duration-500 ${
-              serviceDate === 'tomorrow' ? 'bg-blue-600 text-white shadow-xl shadow-blue-500/30' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'
-            }`}
-          >
-            Tomorrow
-          </button>
+        {/* Office Hours Notice */}
+        <div className="flex items-center gap-3 bg-amber-500/5 border border-amber-500/15 px-4 py-3 rounded-xl mb-6">
+          <Bell size={15} className="text-amber-400 shrink-0" />
+          <p className="text-amber-300/80 text-xs font-medium">
+            Tokens are issued during office hours: <span className="text-amber-300 font-bold">10:00 AM – 5:00 PM</span>
+          </p>
         </div>
 
-        <form onSubmit={handleJoin} className="space-y-8">
-          {queues.length > 0 && (
-            <div className="space-y-3">
-              <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 ml-4">Select Service Queue</label>
-              <select
-                value={selectedQueueId}
-                onChange={e => setSelectedQueueId(e.target.value)}
-                className="input-premium h-18 text-xl appearance-none cursor-pointer"
-                style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 1.5rem center' }}
-              >
-                {queues.map(q => (
-                  <option key={q.id} value={q.id} className="bg-slate-900">{q.name}</option>
-                ))}
-              </select>
+        {/* Live wait preview */}
+        {mlPrediction && (
+          <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10 mb-6">
+            <div className="flex items-center gap-2 text-blue-400 text-sm">
+              <Brain size={15} />
+              <span className="font-medium">Current estimated wait</span>
+            </div>
+            <span className="text-blue-300 font-bold text-sm">
+              {mlPrediction.current_waiting === 0
+                ? 'No wait!'
+                : `~${Math.round(mlPrediction.estimated_wait_minutes)} min`}
+            </span>
+          </div>
+        )}
+
+        <form onSubmit={handleJoin} className="space-y-5" noValidate>
+          {/* Queue selector */}
+          {queues.length > 1 && (
+            <div>
+              <label className="label" htmlFor="queue-select">Select Service</label>
+              <div className="relative">
+                <select
+                  id="queue-select"
+                  value={selectedQueueId}
+                  onChange={e => setSelectedQueueId(e.target.value)}
+                  className="input-field appearance-none pr-10 cursor-pointer"
+                >
+                  {queues.map(q => (
+                    <option key={q.id} value={q.id} className="bg-slate-900">{q.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              </div>
             </div>
           )}
 
-          <div className="space-y-3">
-            <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 ml-4">Phone Number</label>
-            <input
-              type="tel"
-              required
-              value={phone}
-              onChange={e => setPhone(e.target.value)}
-              placeholder="+977 98XXXXXXXX"
-              className="input-premium h-18 text-xl"
-            />
-          </div>
-          <div className="space-y-3">
-            <label className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 ml-4">Email Address</label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              placeholder="you@email.com"
-              className="input-premium h-18 text-xl"
-            />
+          {/* Date Picker */}
+          <div>
+            <label className="label" htmlFor="input-date">
+              Booking Date <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <Calendar size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+              <input
+                id="input-date"
+                type="date"
+                required
+                value={serviceDate}
+                min={todayStr()}
+                onChange={e => setServiceDate(e.target.value)}
+                className="input-field pl-11"
+                style={{ colorScheme: 'dark' }}
+              />
+            </div>
+            {serviceDate && (
+              <p className="text-xs text-blue-400 mt-1.5 ml-1 font-medium">
+                📅 {formatDate(serviceDate)}
+              </p>
+            )}
           </div>
 
+          {/* Name */}
+          <div>
+            <label className="label" htmlFor="input-name">
+              Your Name <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <User size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                id="input-name"
+                type="text"
+                required
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="e.g., Ram Prasad Sharma"
+                className="input-field pl-11"
+                autoComplete="name"
+              />
+            </div>
+          </div>
+
+          {/* Phone */}
+          <div>
+            <label className="label" htmlFor="input-phone">
+              Phone Number <span className="text-red-400">*</span>
+            </label>
+            <div className="relative">
+              <Phone size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+              <input
+                id="input-phone"
+                type="tel"
+                required
+                value={phone}
+                onChange={e => setPhone(e.target.value)}
+                placeholder="+977 98XXXXXXXX"
+                className="input-field pl-11"
+                autoComplete="tel"
+              />
+            </div>
+            <p className="text-xs mt-1.5 ml-1">
+              {phone.replace(/\D/g, '').length >= 7
+                ? <span className="text-emerald-500">✓ We'll notify you when your turn is near.</span>
+                : <span className="text-slate-600">We'll notify you when your turn is near.</span>}
+            </p>
+          </div>
+
+          {/* Submit */}
           <button
             type="submit"
-            disabled={loading || !phone}
-            className="w-full h-18 btn-premium mt-6"
+            id="btn-get-ticket"
+            disabled={loading || !name.trim() || name.trim().length < 2 || phone.replace(/\D/g, '').length < 7 || !serviceDate}
+            className="w-full btn-primary mt-2 h-14 text-base rounded-xl"
           >
-            {loading ? (
-              <span className="flex items-center justify-center gap-4">
-                <span className="w-5 h-5 border-3 border-white/20 border-t-white rounded-full animate-spin" />
-                <span className="tracking-[0.2em]">Reserving...</span>
-              </span>
-            ) : (
-              <span className="flex items-center justify-center gap-4">
-                Join Queue <ArrowRight size={20} />
-              </span>
-            )}
+            {loading
+              ? <><span className="w-5 h-5 border-2 border-white/25 border-t-white rounded-full animate-spin" /> Getting your ticket...</>
+              : <>Get My Ticket <ArrowRight size={18} /></>
+            }
           </button>
         </form>
 
-        <div className="mt-14 text-center">
-            <div className="inline-flex items-center gap-3 px-6 py-3 glass rounded-full opacity-60">
-                <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                <span className="text-[9px] font-black uppercase tracking-[0.3em] text-slate-300">Servers Active & Secure</span>
-            </div>
+        {/* Security note */}
+        <div className="mt-8 flex items-center justify-center gap-2 opacity-50">
+          <span className="live-dot" style={{ width: 6, height: 6 }} />
+          <span className="text-xs text-slate-400 font-medium">Secure &amp; private</span>
         </div>
       </div>
     </div>
