@@ -19,7 +19,7 @@ from models import (
 from schemas import (
     OrganizationCreate, OrganizationResponse,
     QueueCreate, QueueUpdate, QueueResponse, QueueDetailResponse, QueueResetRequest,
-    TokenCreate, TokenResponse, TokenSecureResponse, TokenStateUpdate, TokenListResponse,
+    TokenCreate, TokenResponse, TokenSecureResponse, TokenStateUpdate, TokenPriorityUpdate, TokenListResponse,
     CounterCreate, CounterUpdate, CounterResponse,
     QueueStatsResponse, OperatorQueueResponse, QueueOverviewItem,
     HealthResponse, ImpactStatsResponse
@@ -256,6 +256,18 @@ async def create_queue(
     return db_queue
 
 
+@app.delete("/queues/{queue_id}")
+async def delete_queue(queue_id: str, db: Session = fastapi.Depends(get_db)):
+    """Delete a queue and all its tokens"""
+    queue = db.query(Queue).filter(Queue.id == queue_id).first()
+    if not queue:
+        raise fastapi.HTTPException(status_code=404, detail="Queue not found")
+    
+    db.delete(queue)
+    db.commit()
+    return {"status": "deleted", "queue_id": queue_id}
+
+
 @app.get("/organizations/{org_id}/queues", response_model=list[QueueResponse])
 async def list_queues(org_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
     """List all queues for an organization"""
@@ -328,18 +340,26 @@ async def get_org_overview(org_id: str, service_date: str = None, db: Session = 
             Token.service_date == target_date
         ).count()
 
-        total_completed_today = db.query(Token).filter(
+        total_completed = db.query(Token).filter(
             Token.queue_id == q.id,
             Token.state == TokenState.COMPLETED,
             Token.service_date == target_date
         ).count()
 
-        # Next token to call
-        next_token = db.query(Token).filter(
+        # Find next token with priority logic
+        all_waiting = db.query(Token).filter(
             Token.queue_id == q.id,
             Token.state == TokenState.WAITING,
             Token.service_date == target_date
-        ).order_by(Token.number).first()
+        ).all()
+        
+        now_utc = datetime.utcnow()
+        for t in all_waiting:
+            wait_time = (now_utc - t.joined_at).total_seconds() / 60
+            t.temp_score = t.priority_level + wait_time
+        
+        all_waiting.sort(key=lambda x: (-x.temp_score, x.number))
+        next_token = all_waiting[0] if all_waiting else None
 
         result.append(QueueOverviewItem(
             queue_id=q.id,
@@ -349,7 +369,7 @@ async def get_org_overview(org_id: str, service_date: str = None, db: Session = 
             is_accepting_tokens=is_accepting,
             total_waiting=total_waiting,
             total_serving=total_serving,
-            total_completed_today=total_completed_today,
+            total_completed_today=total_completed,
             daily_limit=q.daily_limit or 0,
             next_token=next_token,
         ))
@@ -536,12 +556,8 @@ async def create_token(
     else:
         interval_minutes = 5  # Default 5-min slots when unlimited
 
-    slot_offset = (next_number - 1) * interval_minutes
-    reporting_hour = OFFICE_START_HOUR + int(slot_offset // 60)
-    reporting_minute = int(slot_offset % 60)
-    # Format as 12-hr time
-    dt_slot = datetime(svc_date.year, svc_date.month, svc_date.day, reporting_hour, reporting_minute)
-    reporting_time_str = dt_slot.strftime("%I:%M %p")  # e.g. "10:30 AM"
+    # Use current Nepal Time as the 'reported' (requested) time
+    reporting_time_str = now_npt.strftime("%I:%M %p")
 
     # ── Risk scoring ────────────────────────────────────────────────────────
     risk_status = "reliable"
@@ -589,6 +605,7 @@ async def create_token(
         estimated_wait_minutes=estimated_minutes,
         estimated_reporting_time=reporting_time_str,
         initial_queue_depth=waiting_count,
+        priority_level=token_data.priority_level or 0
     )
 
     if token_data.phone:
@@ -727,6 +744,23 @@ async def update_token_state(
             )
             db.add(training_record)
     
+    db.commit()
+    db.refresh(token)
+    return token
+
+
+@app.patch("/tokens/{token_id}/priority", response_model=TokenResponse)
+async def update_token_priority(
+    token_id: str,
+    priority_update: TokenPriorityUpdate,
+    db: Session = fastapi.Depends(get_db)
+):
+    """Update token priority level (0=Normal, 100=High, 1000=Emergency)"""
+    token = db.query(Token).filter(Token.id == token_id).first()
+    if not token:
+        raise fastapi.HTTPException(status_code=404, detail="Token not found")
+    
+    token.priority_level = priority_update.priority_level
     db.commit()
     db.refresh(token)
     return token
@@ -937,11 +971,34 @@ async def get_operator_view(queue_id: str, service_date: str = None, db: Session
         svc = datetime.now(NPT).date()
     target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
 
-    waiting = db.query(Token).filter(
+    # Fetch both WAITING and DELAYED tokens
+    all_candidates = db.query(Token).filter(
         Token.queue_id == queue_id,
-        Token.state == TokenState.WAITING,
+        Token.state.in_([TokenState.WAITING, TokenState.DELAYED]),
         Token.service_date == target_date
-    ).order_by(Token.number).all()
+    ).all()
+
+    now_utc = datetime.utcnow()
+    waiting_tokens = []
+    delayed_queue = []
+    
+    for t in all_candidates:
+        if t.state == TokenState.DELAYED:
+            delayed_queue.append(t)
+        else:
+            # Dynamic Score = priority_level + minutes_waiting
+            wait_time = (now_utc - t.joined_at).total_seconds() / 60
+            # We don't store score in DB, just calculate for sorting
+            t.temp_score = t.priority_level + wait_time
+            waiting_tokens.append(t)
+
+    # Sort waiting by dynamic score descending, secondary sort by token number
+    waiting_tokens.sort(key=lambda x: (-x.temp_score, x.number))
+    
+    # Bucket separation
+    emergency_queue = [t for t in waiting_tokens if t.priority_level >= 1000]
+    priority_queue = [t for t in waiting_tokens if 100 <= t.priority_level < 1000]
+    normal_queue = [t for t in waiting_tokens if t.priority_level < 100]
 
     serving = db.query(Token).filter(
         Token.queue_id == queue_id,
@@ -950,7 +1007,7 @@ async def get_operator_view(queue_id: str, service_date: str = None, db: Session
     ).all()
 
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
-    next_token = waiting[0] if waiting else None
+    next_token = waiting_tokens[0] if waiting_tokens else None
 
     # Get date-specific pause status
     date_status = db.query(QueueDateStatus).filter(
@@ -962,8 +1019,12 @@ async def get_operator_view(queue_id: str, service_date: str = None, db: Session
     return OperatorQueueResponse(
         queue_id=queue_id,
         queue_name=queue.name,
-        waiting_tokens=waiting,
+        waiting_tokens=waiting_tokens,
         serving_tokens=serving,
+        emergency_queue=emergency_queue,
+        priority_queue=priority_queue,
+        normal_queue=normal_queue,
+        delayed_queue=delayed_queue,
         counters=counters,
         next_token=next_token,
         is_accepting_tokens=is_accepting

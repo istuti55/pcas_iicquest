@@ -17,6 +17,7 @@ class TokenState(str, enum.Enum):
     SKIPPED = "skipped"
     NO_SHOW = "no_show"
     CANCELLED = "cancelled"
+    DELAYED = "delayed"
 
 
 class Organization(Base):
@@ -45,6 +46,8 @@ class Queue(Base):
     organization = relationship("Organization", back_populates="queues")
     tokens = relationship("Token", back_populates="queue", cascade="all, delete-orphan")
     counters = relationship("Counter", back_populates="queue", cascade="all, delete-orphan")
+    training_data = relationship("TrainingData", back_populates="queue", cascade="all, delete-orphan")
+    date_statuses = relationship("QueueDateStatus", back_populates="queue", cascade="all, delete-orphan")
     
     __table_args__ = (
         Index("ix_queue_organization_active", "organization_id", "active"),
@@ -75,6 +78,7 @@ class Token(Base):
     is_confirmed = Column(Integer, default=0) # 0=False, 1=True
     reminder_sent = Column(Integer, default=0) # 0=False, 1=True
     initial_queue_depth = Column(Integer, nullable=True) # Snapshotted at join time for ML
+    priority_level = Column(Integer, default=0)           # 0=Normal, 100=High, 1000=Emergency
     
     queue = relationship("Queue", back_populates="tokens")
     
@@ -115,6 +119,10 @@ class TrainingData(Base):
     queue_depth = Column(Integer, nullable=False)  # Number waiting at time of join
     wait_time_minutes = Column(Float, nullable=False)  # Actual wait time (minutes)
     recorded_at = Column(DateTime, default=datetime.utcnow)
+    
+    queue = relationship("Queue", back_populates="training_data")
+
+    queue = relationship("Queue", back_populates="training_data")
 
 
 class QueueDateStatus(Base):
@@ -125,6 +133,8 @@ class QueueDateStatus(Base):
     queue_id = Column(String, ForeignKey("queues.id"), nullable=False, index=True)
     service_date = Column(DateTime, nullable=False, index=True) # Midnight UTC
     is_accepting_tokens = Column(Integer, default=1) # 1=True, 0=False
+    
+    queue = relationship("Queue", back_populates="date_statuses")
     
     __table_args__ = (
         Index("ix_qds_queue_date", "queue_id", "service_date", unique=True),

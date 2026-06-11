@@ -12,6 +12,7 @@ class TokenStateEnum(str, Enum):
     SKIPPED = "skipped"
     NO_SHOW = "no_show"
     CANCELLED = "cancelled"
+    DELAYED = "delayed"
 
 
 # Organization Schemas
@@ -79,7 +80,9 @@ class ImpactStatsResponse(BaseModel):
 class TokenCreate(BaseModel):
     name: Optional[str] = None
     phone: Optional[str] = None
-    service_date: Optional[str] = None  # YYYY-MM-DD — defaults to today if omitted
+    email: Optional[str] = None
+    service_date: Optional[str] = None
+    priority_level: Optional[int] = 0  # Allow user to suggest priority
 
 
 class TokenResponse(BaseModel):
@@ -101,6 +104,7 @@ class TokenResponse(BaseModel):
     requires_confirmation: Optional[int]
     is_confirmed: Optional[int]
     reminder_sent: Optional[int]
+    priority_level: int
     
     class Config:
         from_attributes = True
@@ -112,6 +116,9 @@ class TokenSecureResponse(TokenResponse):
 
 class TokenStateUpdate(BaseModel):
     state: TokenStateEnum
+
+class TokenPriorityUpdate(BaseModel):
+    priority_level: int
 
 
 class TokenListResponse(BaseModel):
@@ -170,6 +177,10 @@ class OperatorQueueResponse(BaseModel):
     queue_name: str
     waiting_tokens: List[TokenResponse]
     serving_tokens: List[TokenResponse]
+    emergency_queue: List[TokenResponse]
+    priority_queue: List[TokenResponse]
+    normal_queue: List[TokenResponse]
+    delayed_queue: List[TokenResponse]
     counters: List[CounterResponse]
     next_token: Optional[TokenResponse] = None
     is_accepting_tokens: int

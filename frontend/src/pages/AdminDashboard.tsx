@@ -6,7 +6,9 @@ import {
   Users,
   ChevronRight, LogOut, Phone,
   ArrowRight, ShieldCheck, Activity, KeyRound, CheckCircle2, Settings, CalendarDays,
-  LayoutGrid, PlayCircle, PauseCircle, ChevronDown
+  LayoutGrid, PlayCircle, PauseCircle, ChevronDown,
+  AlertTriangle, Zap, Clock, ArrowUpCircle, History, RefreshCcw,
+  Trash2
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -98,9 +100,9 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   useEffect(() => {
     fetchAll();
     fetchOrgOverview();
-    const t1 = setInterval(fetchAll, 3000);
-    const t2 = setInterval(fetchOrgOverview, 3000);
-    return () => { clearInterval(t1); clearInterval(t2); };
+    const t = setInterval(fetchAll, 3000);
+    const o = setInterval(fetchOrgOverview, 3000);
+    return () => { clearInterval(t); clearInterval(o); };
   }, [queueId, serviceDate]);
 
   const handleCallNext = async () => {
@@ -136,8 +138,41 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     } catch {}
   };
 
+  const handleDeptDelete = async (dept: any) => {
+    if (!confirm(`Permanently DELETE "${dept.queue_name}" and all associated tokens? This cannot be undone.`)) return;
+    try {
+      await queueAPI.delete(dept.queue_id);
+      if (queueId === dept.queue_id) {
+        // If we deleted the currently selected queue, switch to another one
+        const remaining = orgOverview.filter(q => q.queue_id !== dept.queue_id);
+        if (remaining.length > 0) {
+          onQueueChange(remaining[0].queue_id);
+        }
+      }
+      await fetchOrgOverview();
+      await fetchAll();
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to delete department.');
+    }
+  };
+
   const handleComplete = async (id: string) => {
     try { await tokenAPI.updateState(id, 'completed'); await fetchAll(); } catch {}
+  };
+
+  const handleUpdatePriority = async (tokenId: string, level: number) => {
+    try {
+      await tokenAPI.updatePriority(tokenId, level);
+      await fetchAll();
+    } catch {}
+  };
+
+  const handleToggleDelay = async (token: any) => {
+    const newState = token.state === 'delayed' ? 'waiting' : 'delayed';
+    try {
+      await tokenAPI.updateState(token.id, newState);
+      await fetchAll();
+    } catch {}
   };
 
   const handleSkip = async (id: string) => {
@@ -346,6 +381,15 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
             <div className="w-px h-8 bg-white/[0.06] hidden sm:block" />
 
             <button
+              onClick={fetchAll}
+              disabled={loading}
+              className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-400 hover:text-white"
+              title="Refresh Data"
+            >
+              <RefreshCcw size={18} className={loading ? 'animate-spin' : ''} />
+            </button>
+
+            <button
               onClick={onLogout}
               className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all group"
               title="Sign Out"
@@ -423,7 +467,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                         <div className="p-4 flex-1">
                           {dept.next_token ? (
                             <div className="flex items-center gap-3">
-                              <TokenBadge number={dept.next_token.number} status="waiting" size="sm" />
+                              <TokenBadge number={dept.next_token.number} status="waiting" priority={dept.next_token.priority_level} size="sm" />
                               <div className="flex-1 min-w-0">
                                 {dept.next_token.name && <p className="text-slate-200 text-sm font-semibold truncate">{dept.next_token.name}</p>}
                                 {dept.next_token.phone && (
@@ -460,6 +504,13 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                             title="Manage this department"
                           >
                             Manage
+                          </button>
+                          <button
+                            onClick={() => handleDeptDelete(dept)}
+                            className="px-3 h-10 rounded-xl bg-red-500/5 border border-red-500/10 text-red-400 hover:bg-red-500 hover:text-white transition-all transition-all"
+                            title="Delete department"
+                          >
+                            <Trash2 size={16} />
                           </button>
                         </div>
                       </div>
@@ -512,7 +563,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                         <div className="flex-1">
                           <p className="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-4">Next in Queue</p>
                           <div className="flex items-center gap-5 flex-wrap">
-                            <TokenBadge number={opData.next_token.number} status="called" size="lg" />
+                            <TokenBadge number={opData.next_token.number} status="called" priority={opData.next_token.priority_level} size="lg" />
                             <div>
                               {opData.next_token.name && <p className="text-white font-bold text-lg">{opData.next_token.name}</p>}
                               {opData.next_token.phone && (
@@ -552,7 +603,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                           <div key={t.id} className="rounded-2xl border border-white/[0.07] bg-white/[0.03] p-6 flex flex-col gap-5">
                             <div className="flex items-center justify-between">
                               <div>
-                                <TokenBadge number={t.number} status="serving" size="md" />
+                                <TokenBadge number={t.number} status="serving" priority={t.priority_level} size="md" />
                                 {t.name && <p className="text-slate-300 font-semibold text-sm mt-2">{t.name}</p>}
                                 {t.phone && <p className="text-slate-500 text-xs mt-0.5">{t.phone}</p>}
                               </div>
@@ -576,35 +627,118 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                 </div>
 
                 <div className="xl:col-span-5 animate-in" style={{ animationDelay: '0.4s' }}>
-                  <section className="glass rounded-[2.5rem] p-10 h-full">
+                  <section className="glass rounded-[2.5rem] p-10 h-full overflow-y-auto max-h-[850px] custom-scroll">
                     <div className="flex items-center justify-between mb-10">
-                      <h3 className="text-slate-600 text-[10px] font-black uppercase tracking-[0.4em]">Upcoming Flow</h3>
-                      <span className="badge-premium !text-blue-400 bg-blue-500/10 border-blue-500/20">{opData?.waiting_tokens?.length ?? 0}</span>
+                      <h3 className="text-slate-600 text-[10px] font-black uppercase tracking-[0.4em]">Queue Segments</h3>
+                      <span className="badge-premium !text-blue-400 bg-blue-500/10 border-blue-500/20">{opData?.waiting_tokens?.length ?? 0} Total</span>
                     </div>
-                    {opData?.waiting_tokens?.length > 0 ? (
-                      <div className="space-y-4 overflow-y-auto max-h-[700px] pr-4 custom-scroll">
-                        {opData.waiting_tokens.map((t: any, i: number) => (
-                          <div key={t.id} className="group flex items-center gap-4 bg-white/[0.03] border border-white/[0.06] rounded-2xl p-4 hover:border-white/10 transition-all duration-300">
-                            <span className="text-slate-600 text-xs font-bold w-5 shrink-0">{i + 1}</span>
-                            <TokenBadge number={t.number} status="waiting" size="sm" />
-                            <div className="flex-1 min-w-0">
-                              {t.name && <p className="text-slate-200 font-semibold text-sm truncate">{t.name}</p>}
-                              {t.phone && <p className="text-slate-500 text-xs truncate">{t.phone}</p>}
-                            </div>
-                            {t.estimated_reporting_time && (
-                              <div className="text-right shrink-0">
-                                <p className="text-blue-400 font-bold text-sm">{t.estimated_reporting_time}</p>
-                                <p className="text-xs text-slate-600 uppercase tracking-tighter">Report By</p>
+
+                    <div className="space-y-12">
+                      {/* Emergency Queue */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-4">
+                          <Zap size={14} className="text-red-500" />
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-red-500">Emergency ({opData?.emergency_queue?.length || 0})</h4>
+                        </div>
+                        <div className="space-y-3">
+                          {opData?.emergency_queue?.map((t: any) => (
+                            <div key={t.id} className="group relative bg-red-500/5 border border-red-500/10 rounded-2xl p-4 hover:border-red-500/30 transition-all duration-300">
+                              <div className="flex items-center gap-4">
+                                <TokenBadge number={t.number} status="waiting" priority={t.priority_level} size="sm" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-slate-200 font-semibold text-sm truncate">{t.name || 'Anonymous'}</p>
+                                  <p className="text-slate-500 text-xs truncate">{t.phone || 'No Phone'}</p>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleUpdatePriority(t.id, 0)} className="p-1.5 rounded-lg text-slate-500 hover:text-blue-400 hover:bg-white/5 transition-all" title="Demote to Normal">
+                                    <Clock size={14} />
+                                  </button>
+                                  <button onClick={() => handleToggleDelay(t)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 transition-all" title="Delay">
+                                    <History size={14} />
+                                  </button>
+                                </div>
                               </div>
-                            )}
-                          </div>
-                        ))}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    ) : (
-                      <div className="h-48 flex flex-col items-center justify-center text-slate-800">
-                        <p className="text-[10px] font-black uppercase tracking-[0.4em]">System Idle</p>
+
+                      {/* Priority Queue */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-4">
+                          <ArrowUpCircle size={14} className="text-amber-500" />
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-500">High Priority ({opData?.priority_queue?.length || 0})</h4>
+                        </div>
+                        <div className="space-y-3">
+                          {opData?.priority_queue?.map((t: any) => (
+                            <div key={t.id} className="group relative bg-amber-500/5 border border-amber-500/10 rounded-2xl p-4 hover:border-amber-500/30 transition-all duration-300">
+                              <div className="flex items-center gap-4">
+                                <TokenBadge number={t.number} status="waiting" priority={t.priority_level} size="sm" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-slate-200 font-semibold text-sm truncate">{t.name || 'Anonymous'}</p>
+                                  <p className="text-slate-500 text-xs truncate">{t.phone || 'No Phone'}</p>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => handleUpdatePriority(t.id, 1000)} className="p-1.5 rounded-lg text-red-400 hover:bg-white/5 transition-all" title="Promote to Emergency"><Zap size={14} /></button>
+                                  <button onClick={() => handleUpdatePriority(t.id, 0)} className="p-1.5 rounded-lg text-blue-400 hover:bg-white/5 transition-all" title="Demote to Normal"><Clock size={14} /></button>
+                                  <button onClick={() => handleToggleDelay(t)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 transition-all" title="Delay"><History size={14} /></button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                    )}
+
+                      {/* Normal Queue */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-4">
+                          <Clock size={14} className="text-blue-400" />
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-blue-400">Standard Queue ({opData?.normal_queue?.length || 0})</h4>
+                        </div>
+                        <div className="space-y-3">
+                          {opData?.normal_queue?.map((t: any) => (
+                            <div key={t.id} className="group relative bg-white/[0.02] border border-white/[0.06] rounded-2xl p-4 hover:border-white/10 transition-all duration-300">
+                              <div className="flex items-center gap-4">
+                                <TokenBadge number={t.number} status="waiting" priority={t.priority_level} size="sm" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-slate-200 font-semibold text-sm truncate">{t.name || 'Anonymous'}</p>
+                                  <p className="text-slate-500 text-xs truncate">{t.phone || 'No Phone'}</p>
+                                </div>
+                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                  <button onClick={() => handleUpdatePriority(t.id, 1000)} className="p-1.5 rounded-lg text-red-400 hover:bg-white/5 transition-all" title="Emergency"><Zap size={14} /></button>
+                                  <button onClick={() => handleUpdatePriority(t.id, 100)} className="p-1.5 rounded-lg text-amber-400 hover:bg-white/5 transition-all" title="High Priority"><ArrowUpCircle size={14} /></button>
+                                  <button onClick={() => handleToggleDelay(t)} className="p-1.5 rounded-lg text-slate-400 hover:bg-white/5 transition-all" title="Delay"><History size={14} /></button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                      {/* Delayed Queue */}
+                      <div className="space-y-4">
+                        <div className="flex items-center gap-2 mb-4">
+                          <History size={14} className="text-slate-500" />
+                          <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Delayed / Suspended ({opData?.delayed_queue?.length || 0})</h4>
+                        </div>
+                        <div className="space-y-3">
+                          {opData?.delayed_queue?.map((t: any) => (
+                            <div key={t.id} className="group relative bg-slate-900 border border-white/5 rounded-2xl p-4 grayscale opacity-60 hover:grayscale-0 hover:opacity-100 transition-all duration-300">
+                              <div className="flex items-center gap-4">
+                                <TokenBadge number={t.number} status="delayed" priority={t.priority_level} size="sm" />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-slate-400 font-semibold text-sm truncate">{t.name || 'Anonymous'}</p>
+                                  <p className="text-slate-600 text-xs truncate">Holding State</p>
+                                </div>
+                                <button onClick={() => handleToggleDelay(t)} className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500 hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider">
+                                  Restore
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
                   </section>
                 </div>
               </div>

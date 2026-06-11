@@ -4,7 +4,8 @@ import TokenBadge from '../components/TokenBadge';
 import {
   ArrowLeft, Clock, Hash, Users, AlertCircle,
   ArrowRight, Brain, ShieldAlert, CheckCircle, User, Phone, ChevronDown,
-  Calendar, Bell, Search, Smartphone
+  Calendar, Bell, Search, Smartphone,
+  Zap, ArrowUpCircle
 } from 'lucide-react';
 
 interface UserPortalProps {
@@ -39,6 +40,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
   const [mlPrediction, setMlPrediction]   = useState<{ estimated_wait_minutes: number; source: string; current_waiting: number; is_ml_trained: boolean } | null>(null);
   const [queues, setQueues] = useState<any[]>([]);
   const [selectedQueueId, setSelectedQueueId] = useState<string>(defaultQueueId);
+  const [userPriority, setUserPriority] = useState<number>(0);
 
   // Retrieve-ticket state
   const [showLookup, setShowLookup]     = useState(false);
@@ -168,6 +170,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
         name: name.trim() || undefined,
         phone: phone || undefined,
         service_date: serviceDate,
+        priority_level: userPriority,
       });
       const newToken = res.data;
       if (newToken.secret_token) {
@@ -230,7 +233,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
   if (token) {
     // Parse service_date from token for display
     const tokenDate = token.service_date
-      ? new Date(token.service_date).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
+      ? new Date(token.service_date).toLocaleDateString('en-US', { timeZone: 'Asia/Kathmandu', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })
       : '';
 
     return (
@@ -288,6 +291,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
                   <TokenBadge
                     number={token.number}
                     status={token.state === 'called' ? 'called' : token.state as any}
+                    priority={token.priority_level}
                     size="lg"
                   />
                 </div>
@@ -319,7 +323,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
             {token.estimated_reporting_time && (
               <div className="rounded-xl p-4 bg-white/[0.03] border border-white/[0.06] text-center">
                 <div className="flex justify-center mb-2"><Clock size={14} className="text-amber-400" /></div>
-                <p className="text-xs text-slate-500 mt-0.5">Report By</p>
+                <p className="text-xs text-slate-500 mt-0.5">Reported Time</p>
                 <p className="text-xl font-bold text-amber-300 mt-1">{token.estimated_reporting_time}</p>
               </div>
             )}
@@ -366,7 +370,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
                     <div>
                       <p className="text-xs text-slate-500 font-medium mb-1">Registered at</p>
                       <p className="text-sm font-semibold text-slate-200">
-                        {new Date(token.joined_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        {new Date(token.joined_at).toLocaleTimeString('en-US', { timeZone: 'Asia/Kathmandu', hour: '2-digit', minute: '2-digit', hour12: true })}
                       </p>
                     </div>
                     {token.name && (
@@ -484,9 +488,9 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
           </div>
         )}
 
-        <form onSubmit={handleJoin} className="space-y-5" noValidate>
-          {/* Department Card Picker — only shown when multiple queues exist */}
-          {queues.length > 1 && (
+        <form onSubmit={handleJoin} className="space-y-6" noValidate>
+          {/* Department Selection */}
+          {queues.length > 0 && (
             <div>
               <label className="label">Select Department <span className="text-red-400">*</span></label>
               <div className="grid grid-cols-1 gap-2.5 mt-1">
@@ -507,7 +511,6 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
                           : 'border-white/[0.08] bg-white/[0.03] hover:border-white/[0.15] hover:bg-white/[0.05] cursor-pointer'
                       }`}
                     >
-                      {/* Selection indicator */}
                       <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-all ${
                         isSelected ? 'border-blue-400 bg-blue-400' : 'border-slate-600'
                       }`}>
@@ -524,19 +527,38 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
                           <p className="text-xs text-slate-500 mt-0.5 truncate">{q.description}</p>
                         )}
                       </div>
-                      {!isPaused && (
-                        <div className="text-right shrink-0">
-                          <p className={`text-[10px] font-bold uppercase tracking-wider ${
-                            isSelected ? 'text-blue-400' : 'text-slate-600'
-                          }`}>Selected</p>
-                        </div>
-                      )}
                     </button>
                   );
                 })}
               </div>
             </div>
           )}
+
+          {/* User-Nominated Priority */}
+          <div>
+            <label className="label">Triage / Priority <span className="text-slate-500">(Optional)</span></label>
+            <div className="grid grid-cols-3 gap-2 mt-1">
+              {[
+                { label: 'Normal', value: 0, icon: <Clock size={14} />, color: 'text-blue-400' },
+                { label: 'Urgent', value: 100, icon: <ArrowUpCircle size={14} />, color: 'text-amber-400' },
+                { label: 'Critical', value: 1000, icon: <Zap size={14} />, color: 'text-red-500' },
+              ].map(p => (
+                <button
+                  key={p.value}
+                  type="button"
+                  onClick={() => setUserPriority(p.value)}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border transition-all ${
+                    userPriority === p.value
+                      ? 'bg-white/[0.08] border-white/20 ring-1 ring-white/10'
+                      : 'bg-white/[0.03] border-white/5 hover:bg-white/[0.05]'
+                  }`}
+                >
+                  <div className={`mb-1 ${p.color}`}>{p.icon}</div>
+                  <span className="text-[10px] font-bold uppercase tracking-wider">{p.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
 
           {/* Date Picker */}
           <div>

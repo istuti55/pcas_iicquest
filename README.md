@@ -1,46 +1,53 @@
 # Pālo: Smart Queue Management
 
-Pālo is a premium, real-time queue management system designed to eliminate physical waiting. It combines a stunning "Vanguard" glassmorphism aesthetic with powerful logic, including machine-learning wait predictions and automated SMS notifications.
+![Pālo Logo](file:///C:/Users/Dell/.gemini/antigravity/brain/c5008264-bda8-4ec7-8db8-1090d12ee2b9/palo_logo_premium_1781194621065.png)
 
-## 🌟 The Experience
+## 📋 Project Information
+- **Team Name**: [Pālo Collective]
+- **Members**:
+  - [Member Name 1]
 
-### 🎟️ For Clients (The User Portal)
-Clients can join a queue from anywhere using their mobile device. 
-- **Digital Tokens**: Get a personalized token with a unique verification PIN.
-- **Live Tracking**: See your real-time position in the queue, total people waiting, and an AI-calculated "estimated wait time".
-- **Self-Service Retrieval**: Lost your session? Easily find your active ticket using your phone number and PIN.
-- **Reporting Times**: The system automatically assigns suggested reporting times based on daily service limits.
+## 🚨 Problem Statement
+Physical queues in government offices, hospitals, and busy service centers lead to extreme time wastage, overcrowding, and a poor service experience. Citizens often wait for hours without any visibility into their actual turn time, leading to frustration and inefficiency.
 
-### 🛡️ For Staff (The Admin Console)
-A powerful command center for office operators to manage flow and maintain efficiency.
-- **Live Workspace**: Call the next person in line, mark no-shows, and complete services with a single click.
-- **Dynamic Control**: Pause or resume token generation globally, or for specific dates (e.g., holidays or maintenance days).
-- **Service Analytics**: Monitor live stats like tokens served today, average wait times, and system health.
-- **Priority Management**: Track verification PINs to ensure only valid ticket holders are served.
+## ✅ Solution Description
+Pālo (पालो - "Your Turn") is a premium, real-time queue management system designed to eliminate physical waiting. It combines a stunning "Vanguard" glassmorphism aesthetic with powerful logic to provide:
+- **Digital Registration**: Join the queue remotely and nominate priority (Critical, Urgent, Normal).
+- **AI-Powered Predictions**: A Machine Learning engine predicts wait times based on live queue depth and history.
+- **Triage & Priority**: A dynamic scoring system ensures emergency cases are served first while preventing starvation for normal users.
+- **Automated SMS Updates**: Integration with Infobip for booking confirmations and "turn is near" reminders.
+- **Nepal Standard Time (NPT) Sync**: Full synchronization with NPT for all reported times and live clocks.
 
-## 🧠 Smart Core Logic
-- **ML Engine**: Uses a Gradient Boosting Regressor to predict wait times based on historical data, time of day, and current queue depth.
-- **SMS System**: Integrates with Infobip to send booking confirmations and proactive "turn is near" reminders (approx. 60-120 minutes out).
-- **Automatic Reset**: Each queue resets token numbering daily for a fresh start at 10:00 AM.
-- **Risk Scoring**: Identifies "reliable" vs "high-risk" users based on past attendance, requiring SMS confirmation for unreliable profiles.
+## 🛠️ Tech Stack Used
+- **Frontend**: React (Vite), Tailwind CSS, Lucide-React, Framer Motion.
+- **Backend**: FastAPI (Python), SQLAlchemy (SQLite).
+- **Machine Learning**: Scikit-Learn (Gradient Boosting Regressor), NumPy.
+- **APIs**: Infobip SMS API.
 
-## 🛠️ Technology Stack
-- **Frontend**: React (Vite) + Tailwind CSS + Lucide Icons + Framer Motion (Animations).
-- **Backend**: FastAPI (Python) + SQLAlchemy ORM (SQLite).
-- **Predictive Engine**: Scikit-Learn + NumPy.
-
-## 🚀 Getting Started
+## ⚙️ Setup / Installation Instructions
 
 ### Backend Setup
-1. `cd backend`
-2. `python -m venv venv` and activate it (`.\venv\Scripts\activate` on Windows).
-3. `pip install -r requirements.txt`
-4. `uvicorn main:app --reload` (Runs on `http://localhost:8000`)
+1. Open a terminal in the `backend` directory.
+2. Initialize a virtual environment: `python -m venv venv`.
+3. Activate the environment: `.\venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Mac/Linux).
+4. Install dependencies: `pip install -r requirements.txt`.
+5. Run the server: `uvicorn main:app --reload --port 8000`.
 
 ### Frontend Setup
-1. `cd frontend`
-2. `npm install`
-3. `npm run dev` (Runs on `http://localhost:5173`)
+1. Open a terminal in the `frontend` directory.
+2. Install dependencies: `npm install`.
+3. Start the development server: `npm run dev`.
+
+## 🤖 AI Tools Used
+- **Antigravity (Google DeepMind)**: Antigravity was used extensively for:
+  - Designing and implementing the "Vanguard" Glassmorphism UI.
+  - Architecting the Priority Scoring and Anti-Starvation algorithms.
+  - Building the ML-based wait time prediction engine.
+  - Synchronizing the system-wide Nepal Standard Time (NPT) logic.
+  - Rapid debugging and refactoring of complex state management.
+
+## 📸 Demo & Screenshots
+*(Screenshots representing the User Portal and Admin Dashboard)*
 
 ---
 **Pālo** · Smart. Simple. Fast.

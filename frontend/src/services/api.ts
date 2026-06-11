@@ -34,11 +34,12 @@ export const queueAPI = {
   predict: (id: string) => api.get(`/queues/${id}/predict`),
   reset: (id: string, service_date?: string) =>
     api.post(`/queues/${id}/reset`, { service_date }),
+  delete: (id: string) => api.delete(`/queues/${id}`),
 };
 
 // Token APIs
 export const tokenAPI = {
-  create: (queueId: string, data: { name?: string; phone?: string; service_date?: string }) =>
+  create: (queueId: string, data: { name?: string; phone?: string; service_date?: string; priority_level?: number }) =>
     api.post(`/queues/${queueId}/tokens`, data),
   list: (queueId: string, service_date?: string) =>
     api.get(`/queues/${queueId}/tokens${service_date ? `?service_date=${service_date}` : ''}`),
@@ -50,6 +51,8 @@ export const tokenAPI = {
   },
   updateState: (id: string, state: string) =>
     api.patch(`/tokens/${id}`, { state }),
+  updatePriority: (id: string, priority_level: number) =>
+    api.patch(`/tokens/${id}/priority`, { priority_level }),
   confirm: (id: string) => api.post(`/tokens/${id}/confirm`),
   lookup: (phone: string, verification_pin: string) =>
     api.post('/tokens/lookup', { phone, verification_pin }),

@@ -71,8 +71,8 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
         </div>
 
         <div className="text-right animate-in" style={{ animationDelay: '0.1s' }}>
-          <p className="text-4xl font-black text-white tracking-tight">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-          <p className="text-slate-500 font-bold text-sm tracking-widest uppercase">{now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</p>
+          <p className="text-4xl font-black text-white tracking-tight">{now.toLocaleTimeString('en-US', { timeZone: 'Asia/Kathmandu', hour12: true, hour: '2-digit', minute: '2-digit' })}</p>
+          <p className="text-slate-500 font-bold text-sm tracking-widest uppercase">{now.toLocaleDateString('en-US', { timeZone: 'Asia/Kathmandu', weekday: 'long', month: 'short', day: 'numeric' })}</p>
         </div>
       </header>
 
@@ -95,7 +95,7 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
                     <div className="space-y-8 w-full">
                        {opData.serving_tokens.map((t: any) => (
                           <div key={t.id} className="text-center animate-in scale-110">
-                             <TokenBadge number={t.number} status="called" size="lg" />
+                             <TokenBadge number={t.number} status="called" priority={t.priority_level} size="lg" />
                              <p className="mt-8 text-emerald-400 font-black text-xs uppercase tracking-[0.3em] animate-pulse">Proceed to Counter 01</p>
                           </div>
                        ))}
@@ -140,7 +140,7 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
                        <div key={t.id} className="bg-white/[0.04] border border-white/5 rounded-[2.5rem] p-8 flex items-center justify-between group hover:bg-blue-600/10 hover:border-blue-500/20 transition-all duration-500 animate-in" style={{ animationDelay: `${0.1 + i * 0.05}s` }}>
                           <div>
                              <p className="text-slate-600 text-[10px] uppercase font-black tracking-widest mb-3">Pos {i + 1}</p>
-                             <TokenBadge number={t.number} status="waiting" size="md" />
+                             <TokenBadge number={t.number} status="waiting" priority={t.priority_level} size="md" />
                           </div>
                            <div className="text-right flex flex-col gap-2">
                               {t.estimated_reporting_time && (
