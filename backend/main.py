@@ -16,7 +16,7 @@ from models import (
 )
 from schemas import (
     OrganizationCreate, OrganizationResponse,
-    QueueCreate, QueueUpdate, QueueResponse, QueueDetailResponse,
+    QueueCreate, QueueUpdate, QueueResponse, QueueDetailResponse, QueueResetRequest,
     TokenCreate, TokenResponse, TokenSecureResponse, TokenStateUpdate, TokenListResponse,
     CounterCreate, CounterUpdate, CounterResponse,
     QueueStatsResponse, OperatorQueueResponse,
@@ -661,6 +661,34 @@ async def update_counter(
 # ============================================================================
 # Dashboard & Analytics
 # ============================================================================
+
+
+@app.post("/queues/{queue_id}/reset")
+async def reset_queue(queue_id: str, req: QueueResetRequest | None = None, db: Session = fastapi.Depends(get_db)):
+    """Reset tokens for a specific queue and date. DANGER: Deletes records."""
+    from zoneinfo import ZoneInfo
+    from datetime import date as date_type
+    
+    NPT = ZoneInfo("Asia/Kathmandu")
+    svc_date_str = req.service_date if (req and req.service_date) else datetime.now(NPT).strftime("%Y-%m-%d")
+    svc = date_type.fromisoformat(svc_date_str)
+    target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+    
+    # Delete tokens for this queue and date
+    deleted = db.query(Token).filter(
+        Token.queue_id == queue_id,
+        Token.service_date == target_date
+    ).delete()
+    
+    db.commit()
+    
+    return {
+        "status": "success",
+        "deleted_count": deleted,
+        "service_date": svc_date_str,
+        "message": f"Successfully cleared {deleted} tokens for {svc_date_str}."
+    }
+
 
 @app.get("/queues/{queue_id}/stats", response_model=QueueStatsResponse)
 async def get_queue_stats(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):

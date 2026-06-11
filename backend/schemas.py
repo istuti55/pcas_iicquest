@@ -42,6 +42,10 @@ class QueueUpdate(BaseModel):
     active: Optional[int] = None
 
 
+class QueueResetRequest(BaseModel):
+    service_date: Optional[str] = None # YYYY-MM-DD
+
+
 class QueueResponse(BaseModel):
     id: str
     organization_id: str

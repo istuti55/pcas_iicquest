@@ -175,6 +175,20 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     setMlSeeding(false);
   };
 
+  const [resetLoading, setResetLoading] = useState(false);
+  const handleResetQueue = async () => {
+    if (!window.confirm('DANGER: This will delete ALL tokens for today in this queue. This cannot be undone. Proceed?')) return;
+    setResetLoading(true);
+    try {
+      await queueAPI.reset(queueId, serviceDate);
+      setConfigMsg({ type: 'success', text: 'Queue cleared for selected date.' });
+      await fetchAll();
+    } catch (err: any) {
+      setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Reset failed.' });
+    }
+    setResetLoading(false);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -405,7 +419,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                             {t.estimated_reporting_time && (
                               <div className="text-right shrink-0">
                                 <p className="text-blue-400 font-bold text-sm">{t.estimated_reporting_time}</p>
-                                <p className="text-xs text-slate-600">report by</p>
+                                <p className="text-xs text-slate-600 uppercase tracking-tighter">Report By</p>
                               </div>
                             )}
                           </div>
@@ -686,6 +700,33 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                     {mlSeeding ? 'Training...' : 'Seed & Train ML Model'}
                   </button>
                   <p className="text-[10px] text-slate-600 mt-4 leading-relaxed">Generates 200 realistic wait records and trains immediately. Only needed once — real waiting data accumulates automatically as tokens are completed.</p>
+                </div>
+
+                {/* Danger Zone */}
+                <div className="rounded-3xl border border-red-500/20 bg-red-500/5 p-10">
+                  <div className="flex items-center gap-4 mb-8">
+                    <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center">
+                      <Activity size={22} className="text-red-400" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-black text-white">Danger Zone</h3>
+                      <p className="text-xs text-slate-500 mt-1">Irreversible actions for system maintenance.</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-6">
+                    <div>
+                      <p className="text-sm font-bold text-white mb-1">Reset Today's Queue</p>
+                      <p className="text-xs text-slate-500 mb-4">Delete all tokens issued for the selected date. This will restart the numbering at #1.</p>
+                      <button 
+                        onClick={handleResetQueue} 
+                        disabled={resetLoading}
+                        className="px-8 h-12 bg-red-500/10 border border-red-500/20 text-red-500 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"
+                      >
+                        {resetLoading ? 'Resetting...' : 'Clear All Tokens for Today'}
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
 

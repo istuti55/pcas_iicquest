@@ -29,6 +29,8 @@ export const queueAPI = {
   getOperatorView: (id: string, service_date?: string) =>
     api.get(`/queues/${id}/operator-view${service_date ? `?service_date=${service_date}` : ''}`),
   predict: (id: string) => api.get(`/queues/${id}/predict`),
+  reset: (id: string, service_date?: string) =>
+    api.post(`/queues/${id}/reset`, { service_date }),
 };
 
 // Token APIs

@@ -327,7 +327,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
             <div className="grid grid-cols-3 gap-3 mb-5">
               {[
                 { icon: <Hash size={14} className="text-blue-400" />, value: queuePosition ?? '—', label: 'Your Position' },
-                { icon: <Clock size={14} className="text-amber-400" />, value: token.estimated_wait_minutes != null ? `${Math.round(token.estimated_wait_minutes)}m` : '—', label: 'Est. Wait' },
+                { icon: <Clock size={14} className="text-amber-400" />, value: (token.estimated_wait_minutes !== null && token.estimated_wait_minutes !== undefined) ? `${Math.round(token.estimated_wait_minutes)}m` : '0m', label: 'Est. Wait' },
                 { icon: <Users size={14} className="text-purple-400" />, value: totalWaiting, label: 'In Queue' },
               ].map(stat => (
                 <div key={stat.label} className="rounded-xl p-4 text-center bg-white/[0.03] border border-white/[0.06]">
@@ -354,7 +354,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
                 <div className="mt-2 p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4 animate-slide-up">
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <p className="text-xs text-slate-500 font-medium mb-1">Joined At</p>
+                      <p className="text-xs text-slate-500 font-medium mb-1">Registered at</p>
                       <p className="text-sm font-semibold text-slate-200">
                         {new Date(token.joined_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                       </p>
