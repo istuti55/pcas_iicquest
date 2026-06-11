@@ -142,12 +142,20 @@ export default function DisplayBoard({ queueId, onBack }: DisplayBoardProps) {
                              <p className="text-slate-600 text-[10px] uppercase font-black tracking-widest mb-3">Pos {i + 1}</p>
                              <TokenBadge number={t.number} status="waiting" size="md" />
                           </div>
-                          {t.estimated_wait_minutes != null && (
-                             <div className="text-right">
-                                <p className="text-blue-400 font-black text-2xl font-mono leading-none">{Math.round(t.estimated_wait_minutes)}m</p>
-                                <p className="text-[10px] uppercase font-black text-slate-600 tracking-tighter mt-1">Estim. Wait</p>
-                             </div>
-                          )}
+                           <div className="text-right flex flex-col gap-2">
+                              {t.estimated_reporting_time && (
+                                <div>
+                                  <p className="text-amber-400 font-black text-lg leading-none">{t.estimated_reporting_time}</p>
+                                  <p className="text-[10px] uppercase font-black text-slate-600 tracking-tighter mt-0.5">Report By</p>
+                                </div>
+                              )}
+                              {t.estimated_wait_minutes != null && (
+                                 <div>
+                                    <p className="text-blue-400 font-black text-xl font-mono leading-none">{Math.round(t.estimated_wait_minutes)}m</p>
+                                    <p className="text-[10px] uppercase font-black text-slate-600 tracking-tighter mt-0.5">Estim. Wait</p>
+                                 </div>
+                              )}
+                           </div>
                        </div>
                     ))}
                  </div>

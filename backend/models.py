@@ -73,6 +73,7 @@ class Token(Base):
     requires_confirmation = Column(Integer, default=0) # 0=False, 1=True
     is_confirmed = Column(Integer, default=0) # 0=False, 1=True
     reminder_sent = Column(Integer, default=0) # 0=False, 1=True
+    initial_queue_depth = Column(Integer, nullable=True) # Snapshotted at join time for ML
     
     queue = relationship("Queue", back_populates="tokens")
     

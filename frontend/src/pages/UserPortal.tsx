@@ -145,7 +145,12 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
       localStorage.setItem('palo_active_token_id', newToken.id);
       setToken(newToken);
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Something went wrong. Please try again.');
+      const msg = err.response?.data?.detail || 'Something went wrong. Please try again.';
+      if (msg.includes('INVALID')) {
+        setError('INVALID: Daily token limit reached. Please try again tomorrow.');
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }

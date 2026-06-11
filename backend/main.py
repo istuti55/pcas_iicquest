@@ -355,7 +355,7 @@ async def create_token(
     if queue.daily_limit > 0 and tokens_issued_for_date >= queue.daily_limit:
         raise fastapi.HTTPException(
             status_code=403,
-            detail=f"All {queue.daily_limit} tokens for {svc_date.strftime('%B %d, %Y')} have been issued. No more slots available."
+            detail=f"INVALID: Token limit ({queue.daily_limit}) reached for {svc_date.strftime('%B %d, %Y')}."
         )
 
     # ── Cooldown: same phone cannot book twice in 24h for the same date ────
@@ -373,6 +373,7 @@ async def create_token(
             )
 
     # ── Assign next token number (resets to 1 each day) ────────────────────
+    # Use text('...') for SQLite date comparison if needed, or ensure midnight UTC is consistent
     last_token = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.service_date == service_date
@@ -441,6 +442,7 @@ async def create_token(
         is_confirmed=0,
         estimated_wait_minutes=estimated_minutes,
         estimated_reporting_time=reporting_time_str,
+        initial_queue_depth=waiting_count,
     )
 
     if token_data.phone:
@@ -569,11 +571,7 @@ async def update_token_state(
                 queue_id=token.queue_id,
                 hour_of_day=token.joined_at.hour,
                 day_of_week=token.joined_at.weekday(),
-                queue_depth=db.query(Token).filter(
-                    Token.queue_id == token.queue_id,
-                    Token.joined_at <= token.joined_at,
-                    Token.state == TokenState.WAITING
-                ).count(),
+                queue_depth=token.initial_queue_depth or 0,
                 wait_time_minutes=wait_minutes
             )
             db.add(training_record)
@@ -678,6 +676,7 @@ async def get_queue_stats(queue_id: str, service_date: str = None, db: Session =
         svc = date_type.fromisoformat(service_date)
     else:
         svc = datetime.now(NPT).date()
+    # Store/Compare as midnight naive to match create_token storage
     target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
 
     waiting = db.query(Token).filter(
@@ -827,11 +826,15 @@ async def predict_wait_time(queue_id: str, db: Session = fastapi.Depends(get_db)
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
 
-    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    from zoneinfo import ZoneInfo
+    NPT = ZoneInfo("Asia/Kathmandu")
+    today_npt = datetime.now(NPT).date()
+    target_date = datetime(today_npt.year, today_npt.month, today_npt.day, 0, 0, 0)
+
     waiting_count = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.state == TokenState.WAITING,
-        Token.service_date == today
+        Token.service_date == target_date
     ).count()
 
     now = datetime.utcnow()
