@@ -56,7 +56,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
       try {
         const idToUse = orgId || localStorage.getItem('palo_org_id');
         if (!idToUse) return;
-        const res = await queueAPI.list(idToUse);
+        const res = await queueAPI.list(idToUse, serviceDate);
         const activeQueues = res.data.filter((q: any) => q.active === 1);
         setQueues(activeQueues);
         if (activeQueues.length > 0 && (!selectedQueueId || !activeQueues.find((q: any) => q.id === selectedQueueId))) {
@@ -65,7 +65,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
       } catch {}
     };
     fetchQueues();
-  }, [orgId, selectedQueueId]);
+  }, [orgId, selectedQueueId, serviceDate]);
 
   // Restore an active token session
   useEffect(() => {
@@ -458,13 +458,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
           </div>
         )}
 
-        {/* Office Hours Notice */}
-        <div className="flex items-center gap-3 bg-amber-500/5 border border-amber-500/15 px-4 py-3 rounded-xl mb-6">
-          <Bell size={15} className="text-amber-400 shrink-0" />
-          <p className="text-amber-300/80 text-xs font-medium">
-            Tokens are issued during office hours: <span className="text-amber-300 font-bold">10:00 AM – 5:00 PM</span>
-          </p>
-        </div>
+
 
         {/* Live wait preview / Paused notice */}
         {mlPrediction && (
@@ -591,6 +585,7 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
               name.trim().length < 2 || 
               phone.replace(/\D/g, '').length < 7 || 
               !serviceDate ||
+              !selectedQueueId ||
               queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0
             }
             className={`w-full btn-premium mt-2 h-14 text-base rounded-2xl shadow-xl transition-all ${

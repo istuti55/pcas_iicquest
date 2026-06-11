@@ -21,7 +21,8 @@ export const organizationAPI = {
 export const queueAPI = {
   create: (orgId: string, data: { name: string; description?: string }) =>
     api.post(`/organizations/${orgId}/queues`, data),
-  list: (orgId: string) => api.get(`/organizations/${orgId}/queues`),
+  list: (orgId: string, service_date?: string) => 
+    api.get(`/organizations/${orgId}/queues${service_date ? `?service_date=${service_date}` : ''}`),
   get: (id: string) => api.get(`/queues/${id}`),
   update: (id: string, data: any) => api.patch(`/queues/${id}`, data),
   getStats: (id: string, service_date?: string) =>

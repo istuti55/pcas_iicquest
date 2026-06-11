@@ -115,3 +115,17 @@ class TrainingData(Base):
     queue_depth = Column(Integer, nullable=False)  # Number waiting at time of join
     wait_time_minutes = Column(Float, nullable=False)  # Actual wait time (minutes)
     recorded_at = Column(DateTime, default=datetime.utcnow)
+
+
+class QueueDateStatus(Base):
+    """Stores date-specific settings (like pause) for a queue"""
+    __tablename__ = "queue_date_status"
+    
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    queue_id = Column(String, ForeignKey("queues.id"), nullable=False, index=True)
+    service_date = Column(DateTime, nullable=False, index=True) # Midnight UTC
+    is_accepting_tokens = Column(Integer, default=1) # 1=True, 0=False
+    
+    __table_args__ = (
+        Index("ix_qds_queue_date", "queue_id", "service_date", unique=True),
+    )

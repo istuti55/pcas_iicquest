@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from database import get_db, init_db
 from models import (
-    Organization, Queue, Token, Counter, TokenState, TrainingData
+    Organization, Queue, Token, Counter, TokenState, TrainingData, QueueDateStatus
 )
 from schemas import (
     OrganizationCreate, OrganizationResponse,
@@ -257,22 +257,54 @@ async def create_queue(
 
 
 @app.get("/organizations/{org_id}/queues", response_model=list[QueueResponse])
-async def list_queues(org_id: str, db: Session = fastapi.Depends(get_db)):
+async def list_queues(org_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
     """List all queues for an organization"""
+    from datetime import date as date_type
     org = db.query(Organization).filter(Organization.id == org_id).first()
     if not org:
         raise fastapi.HTTPException(status_code=404, detail="Organization not found")
     
     queues = db.query(Queue).filter(Queue.organization_id == org_id).all()
+    
+    if service_date:
+        try:
+            svc = date_type.fromisoformat(service_date)
+            target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+            
+            for q in queues:
+                date_status = db.query(QueueDateStatus).filter(
+                    QueueDateStatus.queue_id == q.id,
+                    QueueDateStatus.service_date == target_date
+                ).first()
+                if date_status:
+                    q.is_accepting_tokens = date_status.is_accepting_tokens
+        except ValueError:
+            pass # Fallback to global if date is invalid
+
     return queues
 
 
 @app.get("/queues/{queue_id}", response_model=QueueResponse)
-async def get_queue(queue_id: str, db: Session = fastapi.Depends(get_db)):
+async def get_queue(queue_id: str, service_date: str = None, db: Session = fastapi.Depends(get_db)):
     """Get queue by ID"""
+    from datetime import date as date_type
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
+        
+    if service_date:
+        try:
+            svc = date_type.fromisoformat(service_date)
+            target_date = datetime(svc.year, svc.month, svc.day, 0, 0, 0)
+            date_status = db.query(QueueDateStatus).filter(
+                QueueDateStatus.queue_id == queue_id,
+                QueueDateStatus.service_date == target_date
+            ).first()
+            if date_status:
+                queue.is_accepting_tokens = date_status.is_accepting_tokens
+        except ValueError:
+            pass
+            
     return queue
 
 
@@ -287,7 +319,7 @@ async def update_queue(
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
     
-    if queue_update.name:
+    if queue_update.name is not None:
         queue.name = queue_update.name
     if queue_update.description is not None:
         queue.description = queue_update.description
@@ -296,7 +328,32 @@ async def update_queue(
     if queue_update.daily_limit is not None:
         queue.daily_limit = queue_update.daily_limit
     if queue_update.is_accepting_tokens is not None:
-        queue.is_accepting_tokens = queue_update.is_accepting_tokens
+        if queue_update.service_date:
+            # Date-specific pause
+            try:
+                date_obj = datetime.strptime(queue_update.service_date, "%Y-%m-%d")
+                # Ensure it's midnight UTC for consistency
+                date_obj = date_obj.replace(hour=0, minute=0, second=0, microsecond=0)
+                
+                status = db.query(QueueDateStatus).filter(
+                    QueueDateStatus.queue_id == queue_id,
+                    QueueDateStatus.service_date == date_obj
+                ).first()
+                
+                if not status:
+                    status = QueueDateStatus(
+                        queue_id=queue_id,
+                        service_date=date_obj,
+                        is_accepting_tokens=queue_update.is_accepting_tokens
+                    )
+                    db.add(status)
+                else:
+                    status.is_accepting_tokens = queue_update.is_accepting_tokens
+            except ValueError:
+                raise fastapi.HTTPException(status_code=400, detail="Invalid service_date format. Use YYYY-MM-DD")
+        else:
+            # Global pause
+            queue.is_accepting_tokens = queue_update.is_accepting_tokens
     
     queue.updated_at = datetime.utcnow()
     db.commit()
@@ -325,12 +382,6 @@ async def create_token(
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
 
-    if queue.is_accepting_tokens == 0:
-        raise fastapi.HTTPException(
-            status_code=403,
-            detail=f"Token generation for '{queue.name}' has been temporarily paused by administration."
-        )
-
     # ── Parse service_date ──────────────────────────────────────────────────
     NPT = ZoneInfo("Asia/Kathmandu")
     now_npt = datetime.now(NPT)
@@ -346,6 +397,21 @@ async def create_token(
     else:
         svc_date = today_npt
 
+    # -- Date-specific pause check -------------------------------------------
+    svc_date_midnight = datetime.combine(svc_date, datetime.min.time())
+    date_status = db.query(QueueDateStatus).filter(
+        QueueDateStatus.queue_id == queue_id,
+        QueueDateStatus.service_date == svc_date_midnight
+    ).first()
+    
+    is_accepting = date_status.is_accepting_tokens if date_status else queue.is_accepting_tokens
+    
+    if is_accepting == 0:
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail=f"Token generation for '{queue.name}' on {svc_date} is paused by administration."
+        )
+
     # Store as UTC midnight for that Nepal date (NPT is UTC+5:45)
     # We store the date as a plain midnight datetime in UTC for consistency
     service_date = datetime(
@@ -353,22 +419,7 @@ async def create_token(
         0, 0, 0
     )
 
-    # ── Office hours check (only enforce for TODAY bookings in real time) ──
-    if svc_date == today_npt:
-        office_open  = now_npt.replace(hour=10, minute=0,  second=0, microsecond=0)
-        office_close = now_npt.replace(hour=17, minute=0,  second=0, microsecond=0)
-        if now_npt < office_open:
-            raise fastapi.HTTPException(
-                status_code=403,
-                detail="Token issuance starts at 10:00 AM. Office not open yet."
-            )
-        if now_npt >= office_close:
-            raise fastapi.HTTPException(
-                status_code=403,
-                detail="Token issuance has closed for today. Office hours are 10:00 AM – 5:00 PM."
-            )
-
-    # ── Daily limit check ───────────────────────────────────────────────────
+    # -- Daily limit check ---------------------------------------------------
     tokens_issued_for_date = db.query(Token).filter(
         Token.queue_id == queue_id,
         Token.service_date == service_date
@@ -775,6 +826,13 @@ async def get_queue_stats(queue_id: str, service_date: str = None, db: Session =
     if completed_tokens:
         avg_wait = sum(t.wait_time_minutes for t in completed_tokens) / len(completed_tokens)
 
+    # Get date-specific pause status
+    date_status = db.query(QueueDateStatus).filter(
+        QueueDateStatus.queue_id == queue_id,
+        QueueDateStatus.service_date == target_date
+    ).first()
+    is_accepting = date_status.is_accepting_tokens if date_status else queue.is_accepting_tokens
+
     return QueueStatsResponse(
         queue_id=queue_id,
         queue_name=queue.name,
@@ -785,7 +843,8 @@ async def get_queue_stats(queue_id: str, service_date: str = None, db: Session =
         total_issued=total_issued,
         avg_wait_time=avg_wait,
         counters_active=active_counters,
-        counters_total=len(counters)
+        counters_total=len(counters),
+        is_accepting_tokens=is_accepting
     )
 
 
@@ -820,13 +879,21 @@ async def get_operator_view(queue_id: str, service_date: str = None, db: Session
     counters = db.query(Counter).filter(Counter.queue_id == queue_id).all()
     next_token = waiting[0] if waiting else None
 
+    # Get date-specific pause status
+    date_status = db.query(QueueDateStatus).filter(
+        QueueDateStatus.queue_id == queue_id,
+        QueueDateStatus.service_date == target_date
+    ).first()
+    is_accepting = date_status.is_accepting_tokens if date_status else queue.is_accepting_tokens
+
     return OperatorQueueResponse(
         queue_id=queue_id,
         queue_name=queue.name,
         waiting_tokens=waiting,
         serving_tokens=serving,
         counters=counters,
-        next_token=next_token
+        next_token=next_token,
+        is_accepting_tokens=is_accepting
     )
 
 

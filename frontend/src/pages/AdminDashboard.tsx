@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { queueAPI, tokenAPI, adminAPI, mlAPI } from '../services/api';
 import StatsCard from '../components/StatsCard';
 import TokenBadge from '../components/TokenBadge';
 import {
-  Users, Clock, Monitor,
+  Users,
   ChevronRight, LogOut, Phone,
-  ArrowRight, ShieldCheck, Activity, KeyRound, Brain, CheckCircle2, Settings
+  ArrowRight, ShieldCheck, Activity, KeyRound, CheckCircle2, Settings, CalendarDays
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -33,6 +33,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
   const [isActive, setIsActive] = useState<boolean>(true);
   const [isAcceptingTokens, setIsAcceptingTokens] = useState<boolean>(true);
+  const toggleLocked = useRef(false); // Prevents fetchAll from overriding toggle state mid-flight
 
   // Configuration state
   const [configName, setConfigName] = useState('');
@@ -78,9 +79,10 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       if (document.activeElement?.id !== 'dailyLimitInput') {
         setLocalDailyLimit((qRes.data.daily_limit || 0).toString());
       }
-      if (document.activeElement?.id !== 'configActiveInput') {
+      if (!toggleLocked.current) {
         setIsActive(qRes.data.active === 1);
-        setIsAcceptingTokens(qRes.data.is_accepting_tokens === 1);
+        // Use the date-specific status from stats if available
+        setIsAcceptingTokens(sRes.data.is_accepting_tokens === 1);
       }
       setStats(sRes.data);
       setOpData(opRes.data);
@@ -151,12 +153,21 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
   };
 
   const handleToggleAccepting = async (newVal: boolean) => {
+    toggleLocked.current = true;
     setIsAcceptingTokens(newVal);
     try {
-      await queueAPI.update(queueId, { is_accepting_tokens: newVal ? 1 : 0 });
+      await queueAPI.update(queueId, { 
+        is_accepting_tokens: newVal ? 1 : 0,
+        service_date: serviceDate
+      });
     } catch (err: any) {
-      alert(err.response?.data?.detail || 'Failed to update toggle.');
-      setIsAcceptingTokens(!newVal); // Rollback
+      setIsAcceptingTokens(!newVal); // Rollback on error
+      // Show a non-blocking toast-style message instead of alert
+      setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to update token generation status.' });
+      setTimeout(() => setConfigMsg(null), 4000);
+    } finally {
+      // Unlock after 2s so that the next fetchAll poll reflects the saved DB state
+      setTimeout(() => { toggleLocked.current = false; }, 2000);
     }
   };
 
@@ -260,6 +271,29 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Date filter — only shown in Live Workspace */}
+            {activeTab === 'overview' && (
+              <div className="flex items-center gap-2 bg-white/[0.03] border border-white/[0.08] px-3 py-2 rounded-2xl">
+                <CalendarDays size={14} className="text-slate-500 shrink-0" />
+                <input
+                  type="date"
+                  value={serviceDate}
+                  onChange={(e) => setServiceDate(e.target.value || todayStr())}
+                  className="bg-transparent text-slate-300 text-xs font-semibold outline-none cursor-pointer"
+                  title="Filter by service date"
+                />
+                {serviceDate !== todayStr() && (
+                  <button
+                    onClick={() => setServiceDate(todayStr())}
+                    className="text-[10px] font-bold text-blue-400 hover:text-blue-300 transition-colors ml-1 whitespace-nowrap"
+                    title="Back to today"
+                  >
+                    Today
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] pl-4 pr-3 py-2 rounded-2xl">
               <div className="text-right">
                 <p className={`text-[10px] font-bold uppercase tracking-wider leading-none ${isAcceptingTokens ? 'text-emerald-400' : 'text-red-400'}`}>

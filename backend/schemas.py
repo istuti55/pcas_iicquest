@@ -41,6 +41,7 @@ class QueueUpdate(BaseModel):
     daily_limit: Optional[int] = None
     active: Optional[int] = None
     is_accepting_tokens: Optional[int] = None
+    service_date: Optional[str] = None # YYYY-MM-DD
 
 
 class QueueResetRequest(BaseModel):
@@ -161,6 +162,7 @@ class QueueStatsResponse(BaseModel):
     avg_wait_time: Optional[float]
     counters_active: int
     counters_total: int
+    is_accepting_tokens: int
 
 
 class OperatorQueueResponse(BaseModel):
@@ -170,6 +172,7 @@ class OperatorQueueResponse(BaseModel):
     serving_tokens: List[TokenResponse]
     counters: List[CounterResponse]
     next_token: Optional[TokenResponse] = None
+    is_accepting_tokens: int
 
 
 # Health check
