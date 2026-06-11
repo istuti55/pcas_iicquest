@@ -40,6 +40,7 @@ class QueueUpdate(BaseModel):
     description: Optional[str] = None
     daily_limit: Optional[int] = None
     active: Optional[int] = None
+    is_accepting_tokens: Optional[int] = None
 
 
 class QueueResetRequest(BaseModel):
@@ -53,6 +54,7 @@ class QueueResponse(BaseModel):
     description: Optional[str]
     daily_limit: int
     active: int
+    is_accepting_tokens: int
     created_at: datetime
     updated_at: datetime
     

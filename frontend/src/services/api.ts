@@ -48,6 +48,8 @@ export const tokenAPI = {
   updateState: (id: string, state: string) =>
     api.patch(`/tokens/${id}`, { state }),
   confirm: (id: string) => api.post(`/tokens/${id}/confirm`),
+  lookup: (phone: string, verification_pin: string) =>
+    api.post('/tokens/lookup', { phone, verification_pin }),
 };
 
 // Counter APIs

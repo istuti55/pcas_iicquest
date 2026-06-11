@@ -6,9 +6,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import uuid
+import random
+from zoneinfo import ZoneInfo
 
 from database import get_db, init_db
 from models import (
@@ -29,41 +31,53 @@ from database import SessionLocal
 from pydantic import BaseModel
 
 async def run_reminder_loop():
+    """Background task to send reminders when turn is near (1-2 hours)"""
     while True:
+        await asyncio.sleep(60)  # Check every 1 minute
         try:
             db = SessionLocal()
-            now = datetime.utcnow()
-            # Find tokens that are WAITING and haven't had a reminder sent
+            NPT = ZoneInfo("Asia/Kathmandu")
+            now_npt = datetime.now(NPT)
+            target_date = datetime(now_npt.year, now_npt.month, now_npt.day, 0, 0, 0)
+            
+            # Find WAITING tokens for today that haven't had a reminder
             waiting_tokens = db.query(Token).filter(
                 Token.state == TokenState.WAITING,
                 Token.reminder_sent == 0,
-                Token.phone != None
+                Token.phone != None,
+                Token.service_date == target_date
             ).all()
             
             for token in waiting_tokens:
-                # Recalculate estimated wait
+                # Calculate tokens ahead
                 tokens_ahead = db.query(Token).filter(
                     Token.queue_id == token.queue_id,
-                    Token.service_date == token.service_date,
                     Token.state == TokenState.WAITING,
+                    Token.service_date == token.service_date,
                     Token.joined_at < token.joined_at
                 ).count()
                 
-                est = ml_engine.predict(now.hour, now.weekday(), tokens_ahead)
-                if est is None:
-                    est = max(1, tokens_ahead * 8)
+                # Fetch queue for office context if needed, but we mainly need wait time
+                est = ml_engine.predict(now_npt.hour, now_npt.weekday(), tokens_ahead)
+                if est is None: est = tokens_ahead * 5 # Fallback
                 
-                # If wait time is around 60 minutes, send reminder
-                if est > 0 and est <= 60:
+                # Proactive Alert: 60-120 minutes remaining
+                if 60 <= est <= 120:
                     token.reminder_sent = 1
                     db.commit()
-                    send_sms(token.phone, f"Pālo Reminder: Your appointment is in approx. 1 hour. Please prepare to arrive on time.")
+                    
+                    msg = (
+                        f"Hello {token.name or 'User'}, your Pālo turn #{token.number} is approaching (approx. {int(est)}m wait). "
+                        f"Please arrive by {token.estimated_reporting_time}. "
+                        f"Track live: https://palo.quest/t/{token.id}"
+                    )
+                    send_sms(token.phone, msg)
                     
         except Exception as e:
             print(f"Reminder loop error: {e}")
         finally:
             db.close()
-        await asyncio.sleep(60)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -281,6 +295,8 @@ async def update_queue(
         queue.active = queue_update.active
     if queue_update.daily_limit is not None:
         queue.daily_limit = queue_update.daily_limit
+    if queue_update.is_accepting_tokens is not None:
+        queue.is_accepting_tokens = queue_update.is_accepting_tokens
     
     queue.updated_at = datetime.utcnow()
     db.commit()
@@ -308,6 +324,12 @@ async def create_token(
     queue = db.query(Queue).filter(Queue.id == queue_id).first()
     if not queue:
         raise fastapi.HTTPException(status_code=404, detail="Queue not found")
+
+    if queue.is_accepting_tokens == 0:
+        raise fastapi.HTTPException(
+            status_code=403,
+            detail=f"Token generation for '{queue.name}' has been temporarily paused by administration."
+        )
 
     # ── Parse service_date ──────────────────────────────────────────────────
     NPT = ZoneInfo("Asia/Kathmandu")
@@ -446,10 +468,12 @@ async def create_token(
     )
 
     if token_data.phone:
+        NPT = ZoneInfo("Asia/Kathmandu")
+        joined_time_npt = now_utc.astimezone(NPT).strftime("%I:%M %p")
         msg = (
-            f"Your Pālo ticket is confirmed!\n"
-            f"Token #{db_token.number} | Date: {svc_date.strftime('%b %d, %Y')} | "
-            f"Report by: {reporting_time_str}"
+            f"Namaste {token_data.name or 'User'}! Your Pālo token for {queue.name} is #{db_token.number}. "
+            f"Registered at {joined_time_npt}. Please report by {reporting_time_str}. "
+            f"Track live: https://palo.quest/t/{db_token.id}"
         )
         if requires_confirmation == 1:
             msg += "\nACTION REQUIRED: Reply 'YES' to confirm your attendance."
@@ -543,6 +567,7 @@ async def get_token(
 async def update_token_state(
     token_id: str,
     state_update: TokenStateUpdate,
+    background_tasks: fastapi.BackgroundTasks,
     db: Session = fastapi.Depends(get_db)
 ):
     """Update token state"""
@@ -553,11 +578,13 @@ async def update_token_state(
     now = datetime.utcnow()
     
     # State transitions
-    old_state = token.state
     token.state = TokenState(state_update.state)
     
-    if token.state == TokenState.CALLED and not token.called_at:
+    if token.state == TokenState.CALLED:
         token.called_at = now
+        if token.phone:
+            msg = f"TOKEN ALERT: #{token.number}, your turn has arrived! Please proceed to the counter now. - Pālo Queue"
+            background_tasks.add_task(send_sms, token.phone, msg)
     
     if token.state == TokenState.COMPLETED and not token.completed_at:
         token.completed_at = now
@@ -841,6 +868,55 @@ async def train_ml_model(db: Session = fastapi.Depends(get_db)):
 async def get_model_info():
     """Get ML model information"""
     return ml_engine.get_model_info()
+
+
+# ============================================================================
+# Cross-Device Token Lookup
+# ============================================================================
+
+class TokenLookupRequest(BaseModel):
+    phone: str
+    verification_pin: str
+
+
+@app.post("/tokens/lookup")
+async def lookup_token(
+    req: TokenLookupRequest,
+    db: Session = fastapi.Depends(get_db)
+):
+    """
+    Allows a user to retrieve their active ticket from another device.
+    Supply the phone number used at registration and the 4-digit verification
+    PIN shown on the ticket. Returns token_id + secret_token so the frontend
+    can restore a full verified session.
+    """
+    # Normalise phone (strip spaces/dashes for comparison)
+    phone_clean = req.phone.strip()
+
+    token = db.query(Token).filter(
+        Token.phone == phone_clean,
+        Token.verification_pin == req.verification_pin.strip(),
+        Token.state.in_([
+            TokenState.WAITING,
+            TokenState.CALLED,
+            TokenState.SERVING,
+        ])
+    ).order_by(Token.joined_at.desc()).first()
+
+    if not token:
+        raise fastapi.HTTPException(
+            status_code=404,
+            detail="No active ticket found for this phone number and PIN combination. "
+                   "Make sure you entered the correct details."
+        )
+
+    return {
+        "token_id": token.id,
+        "secret_token": token.secret_token,
+        "token_number": token.number,
+        "name": token.name,
+        "state": token.state,
+    }
 
 
 # ============================================================================

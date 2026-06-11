@@ -4,7 +4,7 @@ import TokenBadge from '../components/TokenBadge';
 import {
   ArrowLeft, Clock, Hash, Users, AlertCircle,
   ArrowRight, Brain, ShieldAlert, CheckCircle, User, Phone, ChevronDown,
-  Calendar, Bell
+  Calendar, Bell, Search, Smartphone
 } from 'lucide-react';
 
 interface UserPortalProps {
@@ -39,6 +39,13 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
   const [mlPrediction, setMlPrediction]   = useState<{ estimated_wait_minutes: number; source: string; current_waiting: number; is_ml_trained: boolean } | null>(null);
   const [queues, setQueues] = useState<any[]>([]);
   const [selectedQueueId, setSelectedQueueId] = useState<string>(defaultQueueId);
+
+  // Retrieve-ticket state
+  const [showLookup, setShowLookup]     = useState(false);
+  const [lookupPhone, setLookupPhone]   = useState('');
+  const [lookupPin, setLookupPin]       = useState('');
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupError, setLookupError]   = useState('');
 
   const notified1MinRef  = useRef(false);
   const notifiedCalledRef = useRef(false);
@@ -128,6 +135,30 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
     return () => clearInterval(t);
   }, [token?.id, selectedQueueId, serviceDate]);
 
+  const handleLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLookupLoading(true);
+    setLookupError('');
+    try {
+      const res = await tokenAPI.lookup(lookupPhone.trim(), lookupPin.trim());
+      const { token_id, secret_token } = res.data;
+      // Restore session on this device
+      localStorage.setItem(`token_secret_${token_id}`, secret_token);
+      localStorage.setItem('palo_active_token_id', token_id);
+      // Fetch and display full ticket
+      const tRes = await tokenAPI.get(token_id);
+      setToken(tRes.data);
+      setShowLookup(false);
+    } catch (err: any) {
+      setLookupError(
+        err.response?.data?.detail ||
+        'Could not find a matching active ticket. Please check your phone number and PIN.'
+      );
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
   const handleJoin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedQueueId) return;
@@ -146,7 +177,9 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
       setToken(newToken);
     } catch (err: any) {
       const msg = err.response?.data?.detail || 'Something went wrong. Please try again.';
-      if (msg.includes('INVALID')) {
+      if (err.response?.status === 403 && msg.includes('paused')) {
+        setError("Joining Paused: The administration has temporarily stopped issuing new tokens for this queue. Please try again later.");
+      } else if (msg.includes('INVALID')) {
         setError('INVALID: Daily token limit reached. Please try again tomorrow.');
       } else {
         setError(msg);
@@ -292,29 +325,6 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
             )}
           </div>
 
-          {/* Confirmation Required Alert */}
-          {token.requires_confirmation === 1 && !token.is_confirmed && !isCompleted && !isCancelled && (
-            <div className="rounded-2xl p-6 mb-5 border border-red-500/25 bg-red-500/5 animate-slide-up">
-              <div className="flex items-start gap-3 mb-4">
-                <div className="w-9 h-9 rounded-xl bg-red-500/15 flex items-center justify-center shrink-0">
-                  <ShieldAlert size={18} className="text-red-400" />
-                </div>
-                <div>
-                  <p className="font-semibold text-white text-sm mb-1">Confirmation Required</p>
-                  <p className="text-slate-400 text-xs leading-relaxed">
-                    Based on your attendance history, please confirm your spot to keep this ticket.
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleConfirm}
-                className="w-full py-3 rounded-xl bg-red-500 hover:bg-red-400 text-white font-semibold text-sm transition-colors"
-              >
-                Confirm My Attendance
-              </button>
-            </div>
-          )}
-
           {/* Verification PIN */}
           <div className="rounded-2xl p-6 mb-5 border border-white/[0.07] bg-white/[0.02] text-center">
             <p className="text-xs text-slate-500 font-medium uppercase tracking-widest mb-2">Verification Code</p>
@@ -456,17 +466,26 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
           </p>
         </div>
 
-        {/* Live wait preview */}
+        {/* Live wait preview / Paused notice */}
         {mlPrediction && (
-          <div className="flex items-center justify-between px-4 py-3 rounded-xl bg-blue-500/5 border border-blue-500/10 mb-6">
-            <div className="flex items-center gap-2 text-blue-400 text-sm">
-              <Brain size={15} />
-              <span className="font-medium">Current estimated wait</span>
+          <div className={`flex items-center justify-between px-5 py-4 rounded-2xl mb-6 border ${
+            queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0
+              ? 'bg-red-500/10 border-red-500/20 text-red-400'
+              : 'bg-blue-500/5 border-blue-500/10 text-blue-400'
+          }`}>
+            <div className="flex items-center gap-2 text-sm">
+              {queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0 
+                ? <><ShieldAlert size={16} /><span className="font-bold">Joining is Paused</span></>
+                : <><Brain size={16} /><span className="font-medium">Current estimated wait</span></>
+              }
             </div>
-            <span className="text-blue-300 font-bold text-sm">
-              {mlPrediction.current_waiting === 0
-                ? 'No wait!'
-                : `~${Math.round(mlPrediction.estimated_wait_minutes)} min`}
+            <span className="font-bold text-sm">
+              {queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0
+                ? 'Check back later'
+                : mlPrediction.current_waiting === 0
+                  ? 'No wait!'
+                  : `~${Math.round(mlPrediction.estimated_wait_minutes)} min`
+              }
             </span>
           </div>
         )}
@@ -566,15 +585,112 @@ export default function UserPortal({ orgId, defaultQueueId, onBack }: UserPortal
           <button
             type="submit"
             id="btn-get-ticket"
-            disabled={loading || !name.trim() || name.trim().length < 2 || phone.replace(/\D/g, '').length < 7 || !serviceDate}
-            className="w-full btn-primary mt-2 h-14 text-base rounded-xl"
-          >
-            {loading
-              ? <><span className="w-5 h-5 border-2 border-white/25 border-t-white rounded-full animate-spin" /> Getting your ticket...</>
-              : <>Get My Ticket <ArrowRight size={18} /></>
+            disabled={
+              loading || 
+              !name.trim() || 
+              name.trim().length < 2 || 
+              phone.replace(/\D/g, '').length < 7 || 
+              !serviceDate ||
+              queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0
             }
+            className={`w-full btn-premium mt-2 h-14 text-base rounded-2xl shadow-xl transition-all ${
+              queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0
+                ? 'grayscale opacity-50 cursor-not-allowed shadow-none border-white/5'
+                : 'shadow-blue-500/20'
+            }`}
+          >
+            {loading ? (
+              <><span className="w-5 h-5 border-2 border-white/25 border-t-white rounded-full animate-spin" /> Getting your ticket...</>
+            ) : queues.find(q => q.id === selectedQueueId)?.is_accepting_tokens === 0 ? (
+              <span className="flex items-center gap-2 opacity-60">Joining Paused <ShieldAlert size={18} /></span>
+            ) : (
+              <><span className="flex items-center gap-2">Get My Ticket <ArrowRight size={18} /></span></>
+            )}
           </button>
         </form>
+
+        {/* ── Retrieve my ticket ─────────────────────────────────────── */}
+        <div className="mt-6">
+          <button
+            type="button"
+            onClick={() => { setShowLookup(!showLookup); setLookupError(''); }}
+            className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-white/[0.03] border border-white/[0.06] hover:bg-white/[0.05] transition-all text-sm text-slate-400 hover:text-slate-200"
+          >
+            <span className="flex items-center gap-2 font-medium">
+              <Smartphone size={15} className="text-violet-400" />
+              Already have a ticket? Retrieve it on this device
+            </span>
+            <ChevronDown size={16} className={`transition-transform duration-300 ${showLookup ? 'rotate-180' : ''}`} />
+          </button>
+
+          {showLookup && (
+            <form
+              onSubmit={handleLookup}
+              className="mt-2 p-5 rounded-xl bg-white/[0.02] border border-white/[0.06] space-y-4 animate-slide-up"
+            >
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Enter the <span className="text-slate-300 font-semibold">phone number</span> and
+                the <span className="text-slate-300 font-semibold">4-digit verification PIN</span> shown
+                on your original ticket to restore your session here.
+              </p>
+
+              {lookupError && (
+                <div className="flex items-start gap-3 bg-red-900/15 border border-red-500/20 p-3 rounded-xl text-red-300 text-xs">
+                  <AlertCircle size={15} className="shrink-0 text-red-400 mt-0.5" />
+                  <p>{lookupError}</p>
+                </div>
+              )}
+
+              <div>
+                <label className="label" htmlFor="lookup-phone">Registered Phone Number</label>
+                <div className="relative">
+                  <Phone size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    id="lookup-phone"
+                    type="tel"
+                    required
+                    value={lookupPhone}
+                    onChange={e => setLookupPhone(e.target.value)}
+                    placeholder="+977 98XXXXXXXX"
+                    className="input-field pl-11"
+                    autoComplete="tel"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="label" htmlFor="lookup-pin">4-Digit Verification PIN</label>
+                <div className="relative">
+                  <Search size={15} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-500" />
+                  <input
+                    id="lookup-pin"
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={4}
+                    pattern="[0-9]{4}"
+                    required
+                    value={lookupPin}
+                    onChange={e => setLookupPin(e.target.value.replace(/\D/g, ''))}
+                    placeholder="e.g. 4829"
+                    className="input-field pl-11 tracking-[0.3em] font-bold"
+                  />
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                disabled={lookupLoading || lookupPhone.replace(/\D/g, '').length < 7 || lookupPin.length < 4}
+                className="w-full py-3 rounded-xl font-semibold text-sm bg-gradient-to-r from-violet-600 to-blue-600 text-white hover:opacity-90 disabled:opacity-40 transition-all flex justify-center items-center gap-2"
+              >
+                {lookupLoading
+                  ? <><span className="w-4 h-4 border-2 border-white/25 border-t-white rounded-full animate-spin" /> Searching...
+                  </>
+                  : <><Search size={15} /> Find My Ticket</>
+                }
+              </button>
+            </form>
+          )}
+        </div>
 
         {/* Security note */}
         <div className="mt-8 flex items-center justify-center gap-2 opacity-50">

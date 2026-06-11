@@ -38,6 +38,7 @@ class Queue(Base):
     description = Column(String, nullable=True)
     daily_limit = Column(Integer, default=0)  # 0 means unlimited
     active = Column(Integer, default=1)
+    is_accepting_tokens = Column(Integer, default=1) # 1=True, 0=False
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

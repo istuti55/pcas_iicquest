@@ -30,8 +30,9 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   };
   const [serviceDate, setServiceDate] = useState<string>(todayStr());
-  const [activeTab, setActiveTab] = useState<'overview' | 'display' | 'settings'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'settings'>('overview');
   const [isActive, setIsActive] = useState<boolean>(true);
+  const [isAcceptingTokens, setIsAcceptingTokens] = useState<boolean>(true);
 
   // Configuration state
   const [configName, setConfigName] = useState('');
@@ -79,6 +80,7 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       }
       if (document.activeElement?.id !== 'configActiveInput') {
         setIsActive(qRes.data.active === 1);
+        setIsAcceptingTokens(qRes.data.is_accepting_tokens === 1);
       }
       setStats(sRes.data);
       setOpData(opRes.data);
@@ -122,7 +124,8 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
         name: configName, 
         description: configDesc,
         daily_limit: newLimit,
-        active: isActive ? 1 : 0
+        active: isActive ? 1 : 0,
+        is_accepting_tokens: isAcceptingTokens ? 1 : 0
       });
       setDailyLimit(newLimit);
       setConfigMsg({ type: 'success', text: 'Queue settings updated successfully.' });
@@ -141,12 +144,20 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       setCreateQueueMsg({ type: 'success', text: `Successfully created queue: ${res.data.name}` });
       setNewQueueName(''); setNewQueueDesc('');
       await fetchAll();
-      // Optional: switch to it immediately
-      // onQueueChange(res.data.id);
     } catch (err: any) {
       setCreateQueueMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to create queue.' });
     }
     setCreateQueueLoading(false);
+  };
+
+  const handleToggleAccepting = async (newVal: boolean) => {
+    setIsAcceptingTokens(newVal);
+    try {
+      await queueAPI.update(queueId, { is_accepting_tokens: newVal ? 1 : 0 });
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Failed to update toggle.');
+      setIsAcceptingTokens(!newVal); // Rollback
+    }
   };
 
   const handleChangePassword = async (e: React.FormEvent) => {
@@ -162,31 +173,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       setPwMsg({ type: 'error', text: err.response?.data?.detail || 'Failed to update PIN.' });
     }
     setPwLoading(false);
-  };
-
-  const handleSeedML = async () => {
-    setMlSeeding(true); setMlMsg(null);
-    try {
-      const res = await mlAPI.seedData();
-      setMlMsg(`Model ready: ${res.data.status}. ${res.data.records_added ?? 0} records added.`);
-    } catch (err: any) {
-      setMlMsg(err.response?.data?.detail || 'Seeding failed.');
-    }
-    setMlSeeding(false);
-  };
-
-  const [resetLoading, setResetLoading] = useState(false);
-  const handleResetQueue = async () => {
-    if (!window.confirm('DANGER: This will delete ALL tokens for today in this queue. This cannot be undone. Proceed?')) return;
-    setResetLoading(true);
-    try {
-      await queueAPI.reset(queueId, serviceDate);
-      setConfigMsg({ type: 'success', text: 'Queue cleared for selected date.' });
-      await fetchAll();
-    } catch (err: any) {
-      setConfigMsg({ type: 'error', text: err.response?.data?.detail || 'Reset failed.' });
-    }
-    setResetLoading(false);
   };
 
   if (loading) {
@@ -249,7 +235,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
         <nav className="flex-1 space-y-1.5">
           {navBtn('overview', 'Live Workspace', Activity)}
           <div className="h-px bg-white/[0.05] my-3" />
-          {navBtn('display', 'Lobby Displays', Monitor)}
           {navBtn('settings', 'System Settings', Settings)}
         </nav>
 
@@ -266,32 +251,43 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
         <header className="px-8 py-6 flex items-center justify-between sticky top-0 z-20 bg-[#0a0f1e]/60 backdrop-blur-xl border-b border-white/[0.06]">
           <div>
             <h2 className="text-2xl font-bold text-white tracking-tight">
-              {activeTab === 'overview' ? 'Live Workspace'
-                : activeTab === 'display' ? 'Lobby Displays'
-                : 'System Settings'}
+              {activeTab === 'overview' ? 'Live Workspace' : 'System Settings'}
             </h2>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="live-dot" style={{ width: 6, height: 6 }} />
               <p className="text-slate-500 text-xs font-medium">{queueName}</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            {activeTab === 'overview' && (
-              <div className="flex items-center gap-2">
-                <Clock size={14} className="text-slate-500" />
-                <input
-                  type="date"
-                  value={serviceDate}
-                  onChange={e => setServiceDate(e.target.value)}
-                  className="bg-white/[0.05] border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white focus:border-blue-500/50 outline-none"
-                  style={{ colorScheme: 'dark' }}
-                />
+
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] pl-4 pr-3 py-2 rounded-2xl">
+              <div className="text-right">
+                <p className={`text-[10px] font-bold uppercase tracking-wider leading-none ${isAcceptingTokens ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {isAcceptingTokens ? 'Accepting' : 'Paused'}
+                </p>
+                <p className="text-[9px] text-slate-500 mt-0.5 whitespace-nowrap">Token Generation</p>
               </div>
-            )}
-            <div className="hidden md:flex items-center gap-2 px-4 py-1.5 bg-white/[0.04] border border-white/[0.07] rounded-full">
-              <span className="live-dot" />
-              <span className="text-xs font-semibold text-slate-300">Live</span>
+              <button 
+                onClick={() => handleToggleAccepting(!isAcceptingTokens)}
+                className={`w-11 h-6 rounded-full relative transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#0a0f1e] ${
+                  isAcceptingTokens ? 'bg-emerald-500/20 focus:ring-emerald-500/30' : 'bg-red-500/20 focus:ring-red-500/30'
+                }`}
+              >
+                <div className={`absolute top-1 w-4 h-4 rounded-full transition-all duration-300 shadow-sm ${
+                  isAcceptingTokens ? 'right-1 bg-emerald-400' : 'left-1 bg-red-400'
+                }`} />
+              </button>
             </div>
+
+            <div className="w-px h-8 bg-white/[0.06] hidden sm:block" />
+
+            <button 
+              onClick={onLogout}
+              className="p-2.5 rounded-xl bg-white/[0.03] border border-white/[0.08] text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-all group"
+              title="Sign Out"
+            >
+              <LogOut size={18} className="transition-transform group-hover:scale-110" />
+            </button>
           </div>
         </header>
 
@@ -435,50 +431,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
               </div>
             </>
           )}
-          {/* ── DISPLAY SETUP TAB ── */}
-          {activeTab === 'display' && (
-            <div className="animate-in glass-card !p-12">
-              <h3 className="text-2xl font-black text-white mb-6">Display Setup</h3>
-              <p className="text-slate-400 mb-10">Configure public displays and open the user-facing portal.</p>
-              <div className="space-y-8">
-                {/* User Portal quick-open */}
-                <div className="glass p-8 rounded-3xl border border-white/5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-                  <div>
-                    <h4 className="text-base font-black text-white mb-1">User Portal</h4>
-                    <p className="text-xs text-slate-500">Open the customer-facing queue portal where users can join the queue.</p>
-                  </div>
-                  <a
-                    href="/?view=user"
-                    target="_blank"
-                    rel="noreferrer"
-                    className="btn-premium px-10 h-12 text-xs shrink-0 flex items-center gap-2"
-                  >
-                    Open Portal <ArrowRight size={16} />
-                  </a>
-                </div>
-
-                {/* Public Display */}
-                <div className="glass p-10 rounded-3xl border-dashed border-white/10 text-center">
-                  <Monitor size={48} className="text-blue-500/50 mx-auto mb-6" />
-                  <h4 className="text-lg font-black text-white mb-2">Lobby Display URL</h4>
-                  <p className="text-sm text-slate-500 mb-8">Open this on your TV or public screen to show the live queue status.</p>
-                  <div className="flex items-center justify-center gap-4 flex-wrap">
-                    <code className="bg-black/50 px-6 py-4 rounded-xl text-blue-400 font-mono text-sm border border-white/5 break-all">
-                      {window.location.origin}/?view=display
-                    </code>
-                    <a
-                      href="/?view=display"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn-premium px-6 h-[54px]"
-                    >
-                      Open Display
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* ── SYSTEM SETTINGS TAB ── */}
           {activeTab === 'settings' && (
@@ -545,21 +497,12 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                         placeholder="0 = Unlimited" 
                       />
                       <p className="text-[10px] text-slate-500">Set the maximum tokens issued per day. Set to 0 for unlimited.</p>
-                    </div>
-
-                    <div className="flex items-center gap-3 bg-white/[0.03] border border-white/[0.08] p-4 rounded-xl">
-                      <input
-                        id="configActiveInput"
-                        type="checkbox"
-                        checked={isActive}
-                        onChange={e => setIsActive(e.target.checked)}
-                        className="w-5 h-5 rounded border-white/[0.08] bg-slate-950 text-blue-500 focus:ring-blue-500/10 focus:ring-2 cursor-pointer"
-                      />
-                      <div>
-                        <label htmlFor="configActiveInput" className="text-sm font-bold text-white cursor-pointer select-none">Active Status</label>
-                        <p className="text-[10px] text-slate-500">Allow users to book tokens in this queue. Inactive queues are hidden.</p>
+                             <div className="flex flex-col gap-4 bg-white/[0.03] border border-white/[0.08] p-5 rounded-2xl">
+                      <div className="text-xs text-slate-400 font-medium px-1">
+                        Use the toggle in the top bar to pause or resume new token generation.
                       </div>
                     </div>
+             </div>
 
                     <div className="pt-2">
                       <button type="submit" disabled={configLoading} className="btn-primary w-full h-14">
@@ -677,57 +620,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
                   </form>
                 </div>
 
-                {/* ML Model Management Card */}
-                <div className="glass-card !p-10">
-                  <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 bg-violet-500/10 rounded-2xl flex items-center justify-center">
-                      <Brain size={22} className="text-violet-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white">AI Wait-Time Model</h3>
-                      <p className="text-xs text-slate-500 mt-1">Bootstrap the ML model with synthetic data so it starts predicting immediately.</p>
-                    </div>
-                  </div>
-
-                  {mlMsg && (
-                    <div className="flex items-center gap-3 p-5 rounded-2xl mb-8 text-sm font-bold bg-violet-500/10 border border-violet-500/20 text-violet-300">
-                      <CheckCircle2 size={18} /><span>{mlMsg}</span>
-                    </div>
-                  )}
-
-                  <button onClick={handleSeedML} disabled={mlSeeding}
-                    className="h-14 px-10 bg-violet-600/10 border border-violet-500/20 text-violet-400 font-black text-[10px] uppercase tracking-[0.3em] rounded-2xl hover:bg-violet-600 hover:text-white transition-all w-full disabled:opacity-50">
-                    {mlSeeding ? 'Training...' : 'Seed & Train ML Model'}
-                  </button>
-                  <p className="text-[10px] text-slate-600 mt-4 leading-relaxed">Generates 200 realistic wait records and trains immediately. Only needed once — real waiting data accumulates automatically as tokens are completed.</p>
-                </div>
-
-                {/* Danger Zone */}
-                <div className="rounded-3xl border border-red-500/20 bg-red-500/5 p-10">
-                  <div className="flex items-center gap-4 mb-8">
-                    <div className="w-12 h-12 bg-red-500/10 rounded-2xl flex items-center justify-center">
-                      <Activity size={22} className="text-red-400" />
-                    </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white">Danger Zone</h3>
-                      <p className="text-xs text-slate-500 mt-1">Irreversible actions for system maintenance.</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <div>
-                      <p className="text-sm font-bold text-white mb-1">Reset Today's Queue</p>
-                      <p className="text-xs text-slate-500 mb-4">Delete all tokens issued for the selected date. This will restart the numbering at #1.</p>
-                      <button 
-                        onClick={handleResetQueue} 
-                        disabled={resetLoading}
-                        className="px-8 h-12 bg-red-500/10 border border-red-500/20 text-red-500 font-bold text-xs uppercase tracking-widest rounded-xl hover:bg-red-500 hover:text-white transition-all disabled:opacity-50"
-                      >
-                        {resetLoading ? 'Resetting...' : 'Clear All Tokens for Today'}
-                      </button>
-                    </div>
-                  </div>
-                </div>
               </div>
 
             </div>
@@ -740,7 +632,6 @@ export default function AdminDashboard({ queueId, orgId, onLogout, onQueueChange
       <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-[#0d1525]/95 backdrop-blur-xl border-t border-white/[0.06] flex items-center justify-around px-2 py-2">
         {[
           { tab: 'overview' as const, label: 'Workspace', Icon: Activity },
-          { tab: 'display' as const, label: 'Displays', Icon: Monitor },
           { tab: 'settings' as const, label: 'Settings', Icon: Settings },
         ].map(({ tab, label, Icon }) => (
           <button
