@@ -396,13 +396,6 @@ async def create_token(
         is_confirmed=0
     )
     
-    # Send Booking / No-Show Confirmation SMS in the background
-    if token_data.phone:
-        msg = f"Your Pālo ticket is confirmed! Ticket #{db_token.number}."
-        if requires_confirmation == 1:
-            msg += "\nACTION REQUIRED: Based on your attendance history, you must reply 'YES' to this message to keep your slot."
-        background_tasks.add_task(send_sms, token_data.phone, msg)
-        
     # Predict wait time
     now = datetime.utcnow()
     hour = now.hour
@@ -413,6 +406,22 @@ async def create_token(
     db.add(db_token)
     db.commit()
     db.refresh(db_token)
+    
+    # Send rich booking confirmation SMS in the background
+    if token_data.phone:
+        est_display = f"{int(estimated_minutes)} min" if estimated_minutes else "calculating..."
+        people_ahead = waiting_count  # tokens waiting before this one
+        
+        msg = (
+            f"Palo Queue - Booking Confirmed!\n"
+            f"Ticket No   : #{db_token.number}\n"
+            f"People Ahead: {people_ahead}\n"
+            f"Est. Wait   : {est_display}\n"
+            f"PIN (show at counter): {db_token.verification_pin}"
+        )
+        if requires_confirmation == 1:
+            msg += "\n\nACTION REQUIRED: Reply YES to confirm attendance or your slot will be released."
+        background_tasks.add_task(send_sms, token_data.phone, msg)
     
     return db_token
 
